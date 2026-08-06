@@ -1,4 +1,5 @@
 mod bind_config;
+mod config;
 mod state;
 mod store;
 mod views;
@@ -88,6 +89,45 @@ async fn set_active_config(State(ctx): State<AppContext>, Form(form): Form<PathF
     Redirect::to("/")
 }
 
+fn active_config_path(ctx: &AppContext) -> Option<PathBuf> {
+    ctx.state.lock().unwrap().active_config.clone()
+}
+
+async fn edit_raw_config(State(ctx): State<AppContext>) -> Html<String> {
+    let Some(path) = active_config_path(&ctx) else {
+        return Html(views::page(&views::no_active_config()));
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Html(views::page(&views::raw_editor(&path, &content))),
+        Err(err) => Html(views::page(&views::error(&format!(
+            "Could not read {}: {err}",
+            path.display()
+        )))),
+    }
+}
+
+#[derive(Deserialize)]
+struct RawConfigForm {
+    content: String,
+}
+
+async fn save_raw_config(
+    State(ctx): State<AppContext>,
+    Form(form): Form<RawConfigForm>,
+) -> Redirect {
+    let Some(path) = active_config_path(&ctx) else {
+        return Redirect::to("/");
+    };
+    // Browsers normalize textarea line breaks to CRLF on form submission
+    // regardless of the file's original line endings — undo that so an
+    // unedited save doesn't rewrite every line ending in the file.
+    let content = form.content.replace("\r\n", "\n");
+    if let Err(err) = std::fs::write(&path, content) {
+        eprintln!("error: failed to save {}: {err}", path.display());
+    }
+    Redirect::to("/raw")
+}
+
 fn cli_bind_arg(args: &[String]) -> Option<String> {
     args.iter()
         .position(|a| a == "--bind")
@@ -129,6 +169,7 @@ async fn main() {
         .route("/", get(index))
         .route("/configs", axum::routing::post(add_config))
         .route("/configs/active", axum::routing::post(set_active_config))
+        .route("/raw", get(edit_raw_config).post(save_raw_config))
         .route("/status", get(status))
         .route("/vendor/htmx/htmx.min.js", get(htmx_js))
         .with_state(ctx);

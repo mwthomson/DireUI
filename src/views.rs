@@ -77,9 +77,40 @@ pub fn config_manager(state: &AppState) -> String {
 <p>Active config: {}</p>
 <ul>{}</ul>
 {}
+<p><a href="/raw">Edit raw config</a></p>
 <button hx-get="/status" hx-swap="outerHTML">Check server status</button>"#,
         html_escape(&active),
         list_items,
         add_config_form("", "/home/user/aprs.conf", "Add config")
+    )
+}
+
+pub fn raw_editor(path: &Path, content: &str) -> String {
+    format!(
+        r#"<h1>Edit raw config</h1>
+<p>Editing: {}</p>
+<form method="post" action="/raw">
+<textarea name="content" rows="20" cols="80">{}</textarea>
+<button type="submit">Save</button>
+</form>
+<p><a href="/">Back</a></p>"#,
+        html_escape(&path.display().to_string()),
+        html_escape(content)
+    )
+}
+
+pub fn no_active_config() -> String {
+    r#"<h1>No active config</h1>
+<p>Add a config file before editing.</p>
+<p><a href="/">Back</a></p>"#
+        .to_string()
+}
+
+pub fn error(message: &str) -> String {
+    format!(
+        r#"<h1>Error</h1>
+<p>{}</p>
+<p><a href="/">Back</a></p>"#,
+        html_escape(message)
     )
 }
