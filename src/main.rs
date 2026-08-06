@@ -1,31 +1,56 @@
 mod bind_config;
+mod state;
+mod store;
+mod views;
+
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use axum::{
-    Router,
+    Form, Router,
+    extract::State,
     http::header,
-    response::{Html, IntoResponse},
+    response::{Html, IntoResponse, Redirect},
     routing::get,
 };
+use serde::Deserialize;
+
+use state::AppState;
+use store::StateStore;
 
 const HTMX_JS: &[u8] = include_bytes!("../assets/vendor/htmx/htmx.min.js");
 
-const INDEX_HTML: &str = r#"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>DireUI</title>
-<script src="/vendor/htmx/htmx.min.js"></script>
-</head>
-<body>
-<h1>DireUI</h1>
-<p>Direwolf configuration is on its way.</p>
-<button hx-get="/status" hx-swap="outerHTML">Check server status</button>
-</body>
-</html>
-"#;
+#[derive(Clone)]
+struct AppContext {
+    state: Arc<Mutex<AppState>>,
+    store: Arc<StateStore>,
+    home: Option<PathBuf>,
+}
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+impl AppContext {
+    fn mutate_and_save(&self, f: impl FnOnce(&mut AppState)) {
+        let mut state = self.state.lock().unwrap();
+        f(&mut state);
+        if let Err(err) = self.store.save(&state) {
+            eprintln!("error: failed to save state: {err}");
+        }
+    }
+}
+
+async fn index(State(ctx): State<AppContext>) -> Html<String> {
+    let state = ctx.state.lock().unwrap();
+    let body = if state.needs_first_run() {
+        let suggestion = ctx
+            .home
+            .as_deref()
+            .and_then(|home| state::suggest_default_config_path(home, |p| p.exists()));
+        views::first_run(suggestion.as_deref())
+    } else {
+        views::config_manager(&state)
+    };
+    Html(views::page(&body))
 }
 
 async fn htmx_js() -> impl IntoResponse {
@@ -34,6 +59,33 @@ async fn htmx_js() -> impl IntoResponse {
 
 async fn status() -> Html<&'static str> {
     Html("<p>DireUI server is running.</p>")
+}
+
+#[derive(Deserialize)]
+struct PathForm {
+    path: String,
+}
+
+async fn add_config(State(ctx): State<AppContext>, Form(form): Form<PathForm>) -> Redirect {
+    let path = PathBuf::from(form.path);
+    if let Err(err) = store::ensure_config_file_exists(&path) {
+        eprintln!("error: failed to create {}: {err}", path.display());
+        return Redirect::to("/");
+    }
+
+    ctx.mutate_and_save(|state| state.add_known_config(path));
+    Redirect::to("/")
+}
+
+async fn set_active_config(State(ctx): State<AppContext>, Form(form): Form<PathForm>) -> Redirect {
+    let path = PathBuf::from(form.path);
+
+    ctx.mutate_and_save(|state| {
+        if let Err(err) = state.set_active_config(&path) {
+            eprintln!("error: {err}");
+        }
+    });
+    Redirect::to("/")
 }
 
 fn cli_bind_arg(args: &[String]) -> Option<String> {
@@ -55,10 +107,31 @@ async fn main() {
             std::process::exit(1);
         });
 
+    let home = std::env::var("HOME").ok().map(PathBuf::from);
+    let xdg_config_home = std::env::var("XDG_CONFIG_HOME").ok();
+    let state_path =
+        store::resolve_state_path(xdg_config_home.as_deref(), home.as_deref().and_then(|p| p.to_str()))
+            .unwrap_or_else(|| {
+                eprintln!("error: could not determine a config directory (HOME is not set)");
+                std::process::exit(1);
+            });
+
+    let store = StateStore::new(state_path);
+    let state = store.load();
+
+    let ctx = AppContext {
+        state: Arc::new(Mutex::new(state)),
+        store: Arc::new(store),
+        home,
+    };
+
     let app = Router::new()
         .route("/", get(index))
+        .route("/configs", axum::routing::post(add_config))
+        .route("/configs/active", axum::routing::post(set_active_config))
         .route("/status", get(status))
-        .route("/vendor/htmx/htmx.min.js", get(htmx_js));
+        .route("/vendor/htmx/htmx.min.js", get(htmx_js))
+        .with_state(ctx);
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
