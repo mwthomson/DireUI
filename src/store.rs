@@ -124,4 +124,39 @@ mod tests {
 
         assert_eq!(reloaded, state);
     }
+
+    #[test]
+    fn loading_a_state_file_written_before_backup_preference_existed_preserves_other_fields() {
+        let path = temp_state_path("pre-backup-preference-upgrade");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"known_configs":["/home/user/.direwolf.conf"],"active_config":"/home/user/.direwolf.conf"}"#,
+        )
+        .unwrap();
+
+        let state = StateStore::new(path).load();
+
+        assert_eq!(
+            state.known_configs,
+            vec![PathBuf::from("/home/user/.direwolf.conf")]
+        );
+        assert_eq!(
+            state.active_config,
+            Some(PathBuf::from("/home/user/.direwolf.conf"))
+        );
+        assert_eq!(state.backup_preference, false);
+    }
+
+    #[test]
+    fn saved_state_preserves_backup_preference_across_reload() {
+        let path = temp_state_path("backup-preference-roundtrip");
+        let mut state = AppState::default();
+        state.set_backup_preference(true);
+
+        StateStore::new(path.clone()).save(&state).unwrap();
+        let reloaded = StateStore::new(path).load();
+
+        assert_eq!(reloaded.backup_preference, true);
+    }
 }

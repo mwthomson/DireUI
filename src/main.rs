@@ -1,3 +1,4 @@
+mod backup;
 mod bind_config;
 mod config;
 mod state;
@@ -89,12 +90,30 @@ async fn set_active_config(State(ctx): State<AppContext>, Form(form): Form<PathF
     Redirect::to("/")
 }
 
+#[derive(Deserialize)]
+struct BackupPreferenceForm {
+    enabled: bool,
+}
+
+async fn set_backup_preference(
+    State(ctx): State<AppContext>,
+    Form(form): Form<BackupPreferenceForm>,
+) -> Redirect {
+    ctx.mutate_and_save(|state| state.set_backup_preference(form.enabled));
+    Redirect::to("/")
+}
+
 fn active_config_path(ctx: &AppContext) -> Option<PathBuf> {
     ctx.state.lock().unwrap().active_config.clone()
 }
 
-fn write_config(path: &std::path::Path, content: String) {
-    if let Err(err) = std::fs::write(path, content) {
+fn backup_preference(ctx: &AppContext) -> bool {
+    ctx.state.lock().unwrap().backup_preference
+}
+
+fn write_config(ctx: &AppContext, path: &std::path::Path, content: String) {
+    let backup_preference = backup_preference(ctx);
+    if let Err(err) = backup::write_with_backup(path, &content, backup_preference) {
         eprintln!("error: failed to save {}: {err}", path.display());
     }
 }
@@ -136,7 +155,7 @@ async fn save_raw_config(
     // regardless of the file's original line endings — undo that so an
     // unedited save doesn't rewrite every line ending in the file.
     let content = form.content.replace("\r\n", "\n");
-    write_config(&path, content);
+    write_config(&ctx, &path, content);
     Redirect::to("/raw")
 }
 
@@ -251,7 +270,7 @@ async fn save_directives(
         return Html(views::page(&views::directives_editor(&fields))).into_response();
     }
 
-    write_config(&path, doc.serialize());
+    write_config(&ctx, &path, doc.serialize());
     Redirect::to("/directives").into_response()
 }
 
@@ -296,6 +315,10 @@ async fn main() {
         .route("/", get(index))
         .route("/configs", axum::routing::post(add_config))
         .route("/configs/active", axum::routing::post(set_active_config))
+        .route(
+            "/backup-preference",
+            axum::routing::post(set_backup_preference),
+        )
         .route("/raw", get(edit_raw_config).post(save_raw_config))
         .route("/directives", get(edit_directives).post(save_directives))
         .route("/status", get(status))

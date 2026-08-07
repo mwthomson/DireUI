@@ -14,6 +14,12 @@ pub fn suggest_default_config_path(
 pub struct AppState {
     pub known_configs: Vec<PathBuf>,
     pub active_config: Option<PathBuf>,
+    // #[serde(default)] so a state.json saved before this field existed
+    // still loads (as backup_preference: false) instead of failing to
+    // deserialize and silently falling back to AppState::default(),
+    // which would wipe known_configs/active_config too.
+    #[serde(default)]
+    pub backup_preference: bool,
 }
 
 impl AppState {
@@ -37,6 +43,10 @@ impl AppState {
         }
         self.active_config = Some(path.clone());
         Ok(())
+    }
+
+    pub fn set_backup_preference(&mut self, enabled: bool) {
+        self.backup_preference = enabled;
     }
 }
 
@@ -128,6 +138,24 @@ mod tests {
         let suggestion = suggest_default_config_path(home, |_| false);
 
         assert_eq!(suggestion, None);
+    }
+
+    #[test]
+    fn backup_preference_defaults_to_disabled() {
+        let state = AppState::default();
+
+        assert_eq!(state.backup_preference, false);
+    }
+
+    #[test]
+    fn set_backup_preference_updates_the_flag() {
+        let mut state = AppState::default();
+
+        state.set_backup_preference(true);
+        assert_eq!(state.backup_preference, true);
+
+        state.set_backup_preference(false);
+        assert_eq!(state.backup_preference, false);
     }
 
     #[test]

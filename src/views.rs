@@ -50,6 +50,15 @@ pub fn first_run(suggested_path: Option<&Path>) -> String {
     )
 }
 
+fn backup_preference_toggle(enabled: bool) -> String {
+    let status = if enabled { "on" } else { "off" };
+    let next_value = if enabled { "false" } else { "true" };
+    let button_label = if enabled { "Turn off" } else { "Turn on" };
+    format!(
+        r#"<p>Backup before save: {status} <form method="post" action="/backup-preference" style="display:inline"><input type="hidden" name="enabled" value="{next_value}"><button type="submit">{button_label}</button></form></p>"#
+    )
+}
+
 pub fn config_manager(state: &AppState) -> String {
     let active = state
         .active_config
@@ -77,12 +86,14 @@ pub fn config_manager(state: &AppState) -> String {
 <p>Active config: {}</p>
 <ul>{}</ul>
 {}
+{}
 <p><a href="/directives">Edit directives</a></p>
 <p><a href="/raw">Edit raw config</a></p>
 <button hx-get="/status" hx-swap="outerHTML">Check server status</button>"#,
         html_escape(&active),
         list_items,
-        add_config_form("", "/home/user/aprs.conf", "Add config")
+        add_config_form("", "/home/user/aprs.conf", "Add config"),
+        backup_preference_toggle(state.backup_preference)
     )
 }
 
