@@ -171,6 +171,16 @@ const CURATED_FIELDS: &[FormFieldSpec] = &[
         name: "ptt",
         directive: config::CuratedDirective::Ptt,
     },
+    FormFieldSpec {
+        label: "AGW network port (AGWPORT)",
+        name: "agwport",
+        directive: config::CuratedDirective::AgwPort,
+    },
+    FormFieldSpec {
+        label: "KISS network port (KISSPORT)",
+        name: "kissport",
+        directive: config::CuratedDirective::KissPort,
+    },
 ];
 
 async fn edit_directives(State(ctx): State<AppContext>) -> Html<String> {

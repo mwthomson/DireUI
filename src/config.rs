@@ -141,6 +141,8 @@ pub enum CuratedDirective {
     Channel,
     Modem,
     Ptt,
+    AgwPort,
+    KissPort,
 }
 
 impl CuratedDirective {
@@ -166,6 +168,14 @@ impl CuratedDirective {
                 keyword: "PTT",
                 validate: validate_generic,
             },
+            CuratedDirective::AgwPort => DirectiveSpec {
+                keyword: "AGWPORT",
+                validate: validate_port,
+            },
+            CuratedDirective::KissPort => DirectiveSpec {
+                keyword: "KISSPORT",
+                validate: validate_port,
+            },
         }
     }
 }
@@ -176,6 +186,7 @@ pub enum ValidationError {
     ContainsNewline,
     NotANumber,
     MissingNumericPrefix,
+    OutOfRange,
 }
 
 impl ValidationError {
@@ -187,6 +198,7 @@ impl ValidationError {
             ValidationError::MissingNumericPrefix => {
                 "Value must start with a number (the baud rate)."
             }
+            ValidationError::OutOfRange => "Value must be a port number from 0 to 65535.",
         }
     }
 }
@@ -222,6 +234,23 @@ fn validate_numeric_prefix(value: &str) -> Result<(), ValidationError> {
         return Err(ValidationError::MissingNumericPrefix);
     }
     Ok(())
+}
+
+// AGWPORT/KISSPORT are TCP port numbers, so the full unsigned 16-bit range
+// (0-65535) applies. 0 is deliberately accepted rather than rejected as
+// out-of-range: Direwolf's convention (as with other server-style config
+// tools) is that a port of 0 disables that particular network interface.
+// This isn't confirmed against Direwolf's own source or docs, same caveat
+// as MODEM's trailing-parameter handling above — but rejecting it outright
+// risks blocking a legitimate way to turn a port off, which seems like the
+// worse failure mode if this assumption turns out wrong.
+fn validate_port(value: &str) -> Result<(), ValidationError> {
+    validate_generic(value)?;
+    match value.trim().parse::<u32>() {
+        Ok(n) if n <= 65535 => Ok(()),
+        Ok(_) => Err(ValidationError::OutOfRange),
+        Err(_) => Err(ValidationError::NotANumber),
+    }
 }
 
 #[cfg(test)]
@@ -416,5 +445,55 @@ mod tests {
         let result = doc.set_curated(CuratedDirective::Ptt, "");
 
         assert_eq!(result, Err(ValidationError::Empty));
+    }
+
+    #[test]
+    fn set_curated_updates_agwport_and_preserves_everything_else() {
+        let input = "# rig notes\nAGWPORT 8000\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::AgwPort, "8010").unwrap();
+
+        assert_eq!(doc.get_curated(CuratedDirective::AgwPort), Some("8010"));
+        assert_eq!(doc.serialize(), "# rig notes\nAGWPORT 8010\n\nADEVICE plughw:0,0\n");
+    }
+
+    #[test]
+    fn set_curated_accepts_zero_as_a_port_value_meaning_disabled() {
+        let mut doc = Document::parse("AGWPORT 8000\n");
+
+        let result = doc.set_curated(CuratedDirective::AgwPort, "0");
+
+        assert!(result.is_ok());
+        assert_eq!(doc.get_curated(CuratedDirective::AgwPort), Some("0"));
+    }
+
+    #[test]
+    fn set_curated_rejects_a_port_above_65535() {
+        let mut doc = Document::parse("AGWPORT 8000\n");
+
+        let result = doc.set_curated(CuratedDirective::AgwPort, "99999");
+
+        assert_eq!(result, Err(ValidationError::OutOfRange));
+    }
+
+    #[test]
+    fn set_curated_rejects_a_non_numeric_port() {
+        let mut doc = Document::parse("AGWPORT 8000\n");
+
+        let result = doc.set_curated(CuratedDirective::AgwPort, "eight-thousand");
+
+        assert_eq!(result, Err(ValidationError::NotANumber));
+    }
+
+    #[test]
+    fn set_curated_updates_kissport_and_preserves_everything_else() {
+        let input = "# rig notes\nKISSPORT 8001\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::KissPort, "8011").unwrap();
+
+        assert_eq!(doc.get_curated(CuratedDirective::KissPort), Some("8011"));
+        assert_eq!(doc.serialize(), "# rig notes\nKISSPORT 8011\n\nADEVICE plughw:0,0\n");
     }
 }
