@@ -181,6 +181,16 @@ const CURATED_FIELDS: &[FormFieldSpec] = &[
         name: "kissport",
         directive: config::CuratedDirective::KissPort,
     },
+    FormFieldSpec {
+        label: "Position beacon (PBEACON)",
+        name: "pbeacon",
+        directive: config::CuratedDirective::PBeacon,
+    },
+    FormFieldSpec {
+        label: "Custom beacon (CBEACON)",
+        name: "cbeacon",
+        directive: config::CuratedDirective::CBeacon,
+    },
 ];
 
 async fn edit_directives(State(ctx): State<AppContext>) -> Html<String> {

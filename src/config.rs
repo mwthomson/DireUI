@@ -143,6 +143,8 @@ pub enum CuratedDirective {
     Ptt,
     AgwPort,
     KissPort,
+    PBeacon,
+    CBeacon,
 }
 
 impl CuratedDirective {
@@ -175,6 +177,14 @@ impl CuratedDirective {
             CuratedDirective::KissPort => DirectiveSpec {
                 keyword: "KISSPORT",
                 validate: validate_port,
+            },
+            CuratedDirective::PBeacon => DirectiveSpec {
+                keyword: "PBEACON",
+                validate: validate_generic,
+            },
+            CuratedDirective::CBeacon => DirectiveSpec {
+                keyword: "CBEACON",
+                validate: validate_generic,
             },
         }
     }
@@ -495,5 +505,41 @@ mod tests {
 
         assert_eq!(doc.get_curated(CuratedDirective::KissPort), Some("8011"));
         assert_eq!(doc.serialize(), "# rig notes\nKISSPORT 8011\n\nADEVICE plughw:0,0\n");
+    }
+
+    #[test]
+    fn set_curated_updates_pbeacon_and_preserves_everything_else() {
+        let input = "# rig notes\nPBEACON delay=1 every=30 lat=42^37.14N long=071^20.83W\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::PBeacon, "delay=1 every=10 lat=42^37.14N long=071^20.83W")
+            .unwrap();
+
+        assert_eq!(
+            doc.get_curated(CuratedDirective::PBeacon),
+            Some("delay=1 every=10 lat=42^37.14N long=071^20.83W")
+        );
+        assert_eq!(
+            doc.serialize(),
+            "# rig notes\nPBEACON delay=1 every=10 lat=42^37.14N long=071^20.83W\n\nADEVICE plughw:0,0\n"
+        );
+    }
+
+    #[test]
+    fn set_curated_updates_cbeacon_and_preserves_everything_else() {
+        let input = "# rig notes\nCBEACON delay=1 info=\"Test\"\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::CBeacon, "delay=1 info=\"Updated\"")
+            .unwrap();
+
+        assert_eq!(
+            doc.get_curated(CuratedDirective::CBeacon),
+            Some("delay=1 info=\"Updated\"")
+        );
+        assert_eq!(
+            doc.serialize(),
+            "# rig notes\nCBEACON delay=1 info=\"Updated\"\n\nADEVICE plughw:0,0\n"
+        );
     }
 }
