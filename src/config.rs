@@ -1,10 +1,3 @@
-// Not yet called by a route — curated directive editing (which reads and
-// writes individual directives) is a separate, later piece of work. The
-// raw-text editing view reads/writes file content directly and has no need
-// for this module; it's exercised directly by the tests below in the
-// meantime.
-#![allow(dead_code)]
-
 #[derive(Debug, Clone, PartialEq)]
 struct DirectiveLine {
     keyword: String,
@@ -109,6 +102,63 @@ impl Document {
             })
             .collect()
     }
+
+    pub fn get_curated(&self, directive: CuratedDirective) -> Option<&str> {
+        self.get_directive(directive.keyword())
+    }
+
+    pub fn set_curated(
+        &mut self,
+        directive: CuratedDirective,
+        value: &str,
+    ) -> Result<(), ValidationError> {
+        validate(value)?;
+        self.set_directive(directive.keyword(), value);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CuratedDirective {
+    AudioDevice,
+}
+
+impl CuratedDirective {
+    fn keyword(&self) -> &'static str {
+        match self {
+            CuratedDirective::AudioDevice => "ADEVICE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationError {
+    Empty,
+    ContainsNewline,
+}
+
+impl ValidationError {
+    pub fn message(&self) -> &'static str {
+        match self {
+            ValidationError::Empty => "Value cannot be empty.",
+            ValidationError::ContainsNewline => "Value cannot contain line breaks.",
+        }
+    }
+}
+
+// Deliberately generic rather than ADEVICE-specific: Direwolf accepts
+// ADEVICE in several legitimately different shapes (an ALSA hardware name,
+// a symbolic device name, "stdin"/"-", or a "capture playback" pair), and
+// without an authoritative grammar for all of them, a stricter format check
+// risks rejecting a value a real Direwolf install would accept.
+fn validate(value: &str) -> Result<(), ValidationError> {
+    if value.trim().is_empty() {
+        return Err(ValidationError::Empty);
+    }
+    if value.contains('\n') || value.contains('\r') {
+        return Err(ValidationError::ContainsNewline);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -181,5 +231,48 @@ mod tests {
         doc.set_directive("MYCALL", "W1AW-2");
 
         assert_eq!(doc.serialize(), "MYCALL W1AW-2\n");
+    }
+
+    #[test]
+    fn set_curated_updates_the_audio_device_and_preserves_everything_else() {
+        let input = "# rig notes\nADEVICE plughw:0,0\n\nCHANNEL 0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::AudioDevice, "plughw:1,0")
+            .unwrap();
+
+        assert_eq!(doc.get_curated(CuratedDirective::AudioDevice), Some("plughw:1,0"));
+        assert_eq!(
+            doc.serialize(),
+            "# rig notes\nADEVICE plughw:1,0\n\nCHANNEL 0\n"
+        );
+    }
+
+    #[test]
+    fn set_curated_rejects_an_empty_value() {
+        let mut doc = Document::parse("ADEVICE plughw:0,0\n");
+
+        let result = doc.set_curated(CuratedDirective::AudioDevice, "   ");
+
+        assert_eq!(result, Err(ValidationError::Empty));
+    }
+
+    #[test]
+    fn set_curated_leaves_the_document_unchanged_on_validation_failure() {
+        let input = "ADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::AudioDevice, "").ok();
+
+        assert_eq!(doc.serialize(), input);
+    }
+
+    #[test]
+    fn set_curated_rejects_a_value_containing_a_newline() {
+        let mut doc = Document::parse("ADEVICE plughw:0,0\n");
+
+        let result = doc.set_curated(CuratedDirective::AudioDevice, "plughw:1,0\nMYCALL W1AW-2");
+
+        assert_eq!(result, Err(ValidationError::ContainsNewline));
     }
 }

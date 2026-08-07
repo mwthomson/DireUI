@@ -77,6 +77,7 @@ pub fn config_manager(state: &AppState) -> String {
 <p>Active config: {}</p>
 <ul>{}</ul>
 {}
+<p><a href="/directives">Edit directives</a></p>
 <p><a href="/raw">Edit raw config</a></p>
 <button hx-get="/status" hx-swap="outerHTML">Check server status</button>"#,
         html_escape(&active),
@@ -96,6 +97,25 @@ pub fn raw_editor(path: &Path, content: &str) -> String {
 <p><a href="/">Back</a></p>"#,
         html_escape(&path.display().to_string()),
         html_escape(content)
+    )
+}
+
+pub fn directives_editor(adevice: &str, error: Option<&str>) -> String {
+    let error_html = error
+        .map(|msg| format!(r#"<p class="error">{}</p>"#, html_escape(msg)))
+        .unwrap_or_default();
+    format!(
+        r#"<h1>Edit directives</h1>
+{}
+<form method="post" action="/directives">
+<label>Audio device (ADEVICE)
+<input type="text" name="adevice" value="{}">
+</label>
+<button type="submit">Save</button>
+</form>
+<p><a href="/">Back</a></p>"#,
+        error_html,
+        html_escape(adevice)
     )
 }
 

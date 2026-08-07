@@ -93,16 +93,30 @@ fn active_config_path(ctx: &AppContext) -> Option<PathBuf> {
     ctx.state.lock().unwrap().active_config.clone()
 }
 
-async fn edit_raw_config(State(ctx): State<AppContext>) -> Html<String> {
-    let Some(path) = active_config_path(&ctx) else {
-        return Html(views::page(&views::no_active_config()));
+fn write_config(path: &std::path::Path, content: String) {
+    if let Err(err) = std::fs::write(path, content) {
+        eprintln!("error: failed to save {}: {err}", path.display());
+    }
+}
+
+/// Reads the Active Config's content, or a rendered error page explaining why not.
+fn read_active_config(ctx: &AppContext) -> Result<(PathBuf, String), Html<String>> {
+    let Some(path) = active_config_path(ctx) else {
+        return Err(Html(views::page(&views::no_active_config())));
     };
     match std::fs::read_to_string(&path) {
-        Ok(content) => Html(views::page(&views::raw_editor(&path, &content))),
-        Err(err) => Html(views::page(&views::error(&format!(
+        Ok(content) => Ok((path, content)),
+        Err(err) => Err(Html(views::page(&views::error(&format!(
             "Could not read {}: {err}",
             path.display()
-        )))),
+        ))))),
+    }
+}
+
+async fn edit_raw_config(State(ctx): State<AppContext>) -> Html<String> {
+    match read_active_config(&ctx) {
+        Ok((path, content)) => Html(views::page(&views::raw_editor(&path, &content))),
+        Err(page) => page,
     }
 }
 
@@ -122,10 +136,49 @@ async fn save_raw_config(
     // regardless of the file's original line endings — undo that so an
     // unedited save doesn't rewrite every line ending in the file.
     let content = form.content.replace("\r\n", "\n");
-    if let Err(err) = std::fs::write(&path, content) {
-        eprintln!("error: failed to save {}: {err}", path.display());
-    }
+    write_config(&path, content);
     Redirect::to("/raw")
+}
+
+async fn edit_directives(State(ctx): State<AppContext>) -> Html<String> {
+    match read_active_config(&ctx) {
+        Ok((_, content)) => {
+            let doc = config::Document::parse(&content);
+            let adevice = doc
+                .get_curated(config::CuratedDirective::AudioDevice)
+                .unwrap_or("")
+                .to_string();
+            Html(views::page(&views::directives_editor(&adevice, None)))
+        }
+        Err(page) => page,
+    }
+}
+
+#[derive(Deserialize)]
+struct DirectivesForm {
+    adevice: String,
+}
+
+async fn save_directives(
+    State(ctx): State<AppContext>,
+    Form(form): Form<DirectivesForm>,
+) -> axum::response::Response {
+    let (path, content) = match read_active_config(&ctx) {
+        Ok(pair) => pair,
+        Err(page) => return page.into_response(),
+    };
+    let mut doc = config::Document::parse(&content);
+    match doc.set_curated(config::CuratedDirective::AudioDevice, &form.adevice) {
+        Ok(()) => {
+            write_config(&path, doc.serialize());
+            Redirect::to("/directives").into_response()
+        }
+        Err(validation_err) => Html(views::page(&views::directives_editor(
+            &form.adevice,
+            Some(validation_err.message()),
+        )))
+        .into_response(),
+    }
 }
 
 fn cli_bind_arg(args: &[String]) -> Option<String> {
@@ -170,6 +223,7 @@ async fn main() {
         .route("/configs", axum::routing::post(add_config))
         .route("/configs/active", axum::routing::post(set_active_config))
         .route("/raw", get(edit_raw_config).post(save_raw_config))
+        .route("/directives", get(edit_directives).post(save_directives))
         .route("/status", get(status))
         .route("/vendor/htmx/htmx.min.js", get(htmx_js))
         .with_state(ctx);
