@@ -103,8 +103,19 @@ impl Document {
             .collect()
     }
 
+    // NOTE: get_curated/set_curated always target the *first* occurrence of
+    // a directive's keyword in the file (via get_directive/set_directive).
+    // For CHANNEL specifically this is a real simplification: Direwolf's
+    // CHANNEL directive is a repeating selector — a multi-channel config
+    // has multiple "CHANNEL n" blocks, each with its own MODEM/PTT lines
+    // scoped beneath it. This curated model edits only the first channel's
+    // settings; a config with channel 1+ has those settings invisible and
+    // unreachable through the curated form (though still safely preserved
+    // as Raw Directives and editable via the raw-text view). Extending to
+    // multiple channels would need a different, channel-aware model, not
+    // just more CuratedDirective variants.
     pub fn get_curated(&self, directive: CuratedDirective) -> Option<&str> {
-        self.get_directive(directive.keyword())
+        self.get_directive(directive.spec().keyword)
     }
 
     pub fn set_curated(
@@ -112,21 +123,49 @@ impl Document {
         directive: CuratedDirective,
         value: &str,
     ) -> Result<(), ValidationError> {
-        validate(value)?;
-        self.set_directive(directive.keyword(), value);
+        let spec = directive.spec();
+        (spec.validate)(value)?;
+        self.set_directive(spec.keyword, value);
         Ok(())
     }
+}
+
+struct DirectiveSpec {
+    keyword: &'static str,
+    validate: fn(&str) -> Result<(), ValidationError>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CuratedDirective {
     AudioDevice,
+    Channel,
+    Modem,
+    Ptt,
 }
 
 impl CuratedDirective {
-    fn keyword(&self) -> &'static str {
+    // Each variant's full behavior (keyword + validator) lives here, in one
+    // place — deliberately not split across a separate keyword() match and
+    // a separate validate() match, so adding a variant never requires
+    // keeping two switches in sync.
+    fn spec(&self) -> DirectiveSpec {
         match self {
-            CuratedDirective::AudioDevice => "ADEVICE",
+            CuratedDirective::AudioDevice => DirectiveSpec {
+                keyword: "ADEVICE",
+                validate: validate_generic,
+            },
+            CuratedDirective::Channel => DirectiveSpec {
+                keyword: "CHANNEL",
+                validate: validate_non_negative_integer,
+            },
+            CuratedDirective::Modem => DirectiveSpec {
+                keyword: "MODEM",
+                validate: validate_numeric_prefix,
+            },
+            CuratedDirective::Ptt => DirectiveSpec {
+                keyword: "PTT",
+                validate: validate_generic,
+            },
         }
     }
 }
@@ -135,6 +174,8 @@ impl CuratedDirective {
 pub enum ValidationError {
     Empty,
     ContainsNewline,
+    NotANumber,
+    MissingNumericPrefix,
 }
 
 impl ValidationError {
@@ -142,21 +183,43 @@ impl ValidationError {
         match self {
             ValidationError::Empty => "Value cannot be empty.",
             ValidationError::ContainsNewline => "Value cannot contain line breaks.",
+            ValidationError::NotANumber => "Value must be a whole number.",
+            ValidationError::MissingNumericPrefix => {
+                "Value must start with a number (the baud rate)."
+            }
         }
     }
 }
 
-// Deliberately generic rather than ADEVICE-specific: Direwolf accepts
-// ADEVICE in several legitimately different shapes (an ALSA hardware name,
-// a symbolic device name, "stdin"/"-", or a "capture playback" pair), and
-// without an authoritative grammar for all of them, a stricter format check
-// risks rejecting a value a real Direwolf install would accept.
-fn validate(value: &str) -> Result<(), ValidationError> {
+fn validate_generic(value: &str) -> Result<(), ValidationError> {
     if value.trim().is_empty() {
         return Err(ValidationError::Empty);
     }
     if value.contains('\n') || value.contains('\r') {
         return Err(ValidationError::ContainsNewline);
+    }
+    Ok(())
+}
+
+// CHANNEL selects which channel subsequent directives apply to; Direwolf
+// numbers channels as non-negative integers starting at 0.
+fn validate_non_negative_integer(value: &str) -> Result<(), ValidationError> {
+    validate_generic(value)?;
+    if value.trim().parse::<u32>().is_err() {
+        return Err(ValidationError::NotANumber);
+    }
+    Ok(())
+}
+
+// MODEM's first token is always a numeric baud rate; Direwolf allows
+// additional trailing parameters (waveform type, etc.) whose grammar isn't
+// validated here for the same reason ADEVICE's value isn't validated
+// beyond generic checks — no authoritative grammar to check them against.
+fn validate_numeric_prefix(value: &str) -> Result<(), ValidationError> {
+    validate_generic(value)?;
+    let first_token = value.split_whitespace().next().unwrap_or("");
+    if first_token.parse::<u32>().is_err() {
+        return Err(ValidationError::MissingNumericPrefix);
     }
     Ok(())
 }
@@ -274,5 +337,84 @@ mod tests {
         let result = doc.set_curated(CuratedDirective::AudioDevice, "plughw:1,0\nMYCALL W1AW-2");
 
         assert_eq!(result, Err(ValidationError::ContainsNewline));
+    }
+
+    #[test]
+    fn set_curated_updates_the_channel_and_preserves_everything_else() {
+        let input = "# rig notes\nCHANNEL 0\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::Channel, "1").unwrap();
+
+        assert_eq!(doc.get_curated(CuratedDirective::Channel), Some("1"));
+        assert_eq!(doc.serialize(), "# rig notes\nCHANNEL 1\n\nADEVICE plughw:0,0\n");
+    }
+
+    #[test]
+    fn set_curated_rejects_a_non_numeric_channel() {
+        let mut doc = Document::parse("CHANNEL 0\n");
+
+        let result = doc.set_curated(CuratedDirective::Channel, "abc");
+
+        assert_eq!(result, Err(ValidationError::NotANumber));
+    }
+
+    #[test]
+    fn set_curated_rejects_a_negative_channel() {
+        let mut doc = Document::parse("CHANNEL 0\n");
+
+        let result = doc.set_curated(CuratedDirective::Channel, "-1");
+
+        assert_eq!(result, Err(ValidationError::NotANumber));
+    }
+
+    #[test]
+    fn set_curated_updates_the_modem_and_preserves_everything_else() {
+        let input = "# rig notes\nMODEM 1200\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::Modem, "9600").unwrap();
+
+        assert_eq!(doc.get_curated(CuratedDirective::Modem), Some("9600"));
+        assert_eq!(doc.serialize(), "# rig notes\nMODEM 9600\n\nADEVICE plughw:0,0\n");
+    }
+
+    #[test]
+    fn set_curated_accepts_modem_trailing_parameters_after_the_baud_rate() {
+        let mut doc = Document::parse("MODEM 1200\n");
+
+        let result = doc.set_curated(CuratedDirective::Modem, "9600 D");
+
+        assert!(result.is_ok());
+        assert_eq!(doc.get_curated(CuratedDirective::Modem), Some("9600 D"));
+    }
+
+    #[test]
+    fn set_curated_rejects_a_modem_value_without_a_leading_baud_rate() {
+        let mut doc = Document::parse("MODEM 1200\n");
+
+        let result = doc.set_curated(CuratedDirective::Modem, "fast");
+
+        assert_eq!(result, Err(ValidationError::MissingNumericPrefix));
+    }
+
+    #[test]
+    fn set_curated_updates_ptt_and_preserves_everything_else() {
+        let input = "# rig notes\nPTT COM1 RTS\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::Ptt, "GPIO 25").unwrap();
+
+        assert_eq!(doc.get_curated(CuratedDirective::Ptt), Some("GPIO 25"));
+        assert_eq!(doc.serialize(), "# rig notes\nPTT GPIO 25\n\nADEVICE plughw:0,0\n");
+    }
+
+    #[test]
+    fn set_curated_rejects_an_empty_ptt_value() {
+        let mut doc = Document::parse("PTT COM1 RTS\n");
+
+        let result = doc.set_curated(CuratedDirective::Ptt, "");
+
+        assert_eq!(result, Err(ValidationError::Empty));
     }
 }

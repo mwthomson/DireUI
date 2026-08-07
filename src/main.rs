@@ -140,45 +140,99 @@ async fn save_raw_config(
     Redirect::to("/raw")
 }
 
+struct FormFieldSpec {
+    label: &'static str,
+    name: &'static str,
+    directive: config::CuratedDirective,
+}
+
+// The single source of truth for which curated directives the /directives
+// form shows and how form field names map to them. edit_directives and
+// save_directives both read from this rather than each enumerating the
+// fields themselves.
+const CURATED_FIELDS: &[FormFieldSpec] = &[
+    FormFieldSpec {
+        label: "Audio device (ADEVICE)",
+        name: "adevice",
+        directive: config::CuratedDirective::AudioDevice,
+    },
+    FormFieldSpec {
+        label: "Channel (CHANNEL)",
+        name: "channel",
+        directive: config::CuratedDirective::Channel,
+    },
+    FormFieldSpec {
+        label: "Modem (MODEM)",
+        name: "modem",
+        directive: config::CuratedDirective::Modem,
+    },
+    FormFieldSpec {
+        label: "PTT",
+        name: "ptt",
+        directive: config::CuratedDirective::Ptt,
+    },
+];
+
 async fn edit_directives(State(ctx): State<AppContext>) -> Html<String> {
     match read_active_config(&ctx) {
         Ok((_, content)) => {
             let doc = config::Document::parse(&content);
-            let adevice = doc
-                .get_curated(config::CuratedDirective::AudioDevice)
-                .unwrap_or("")
-                .to_string();
-            Html(views::page(&views::directives_editor(&adevice, None)))
+            let fields: Vec<views::DirectiveField> = CURATED_FIELDS
+                .iter()
+                .map(|spec| views::DirectiveField {
+                    label: spec.label,
+                    name: spec.name,
+                    value: doc.get_curated(spec.directive).unwrap_or("").to_string(),
+                    error: None,
+                })
+                .collect();
+            Html(views::page(&views::directives_editor(&fields)))
         }
         Err(page) => page,
     }
 }
 
-#[derive(Deserialize)]
-struct DirectivesForm {
-    adevice: String,
-}
-
 async fn save_directives(
     State(ctx): State<AppContext>,
-    Form(form): Form<DirectivesForm>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
     let (path, content) = match read_active_config(&ctx) {
         Ok(pair) => pair,
         Err(page) => return page.into_response(),
     };
     let mut doc = config::Document::parse(&content);
-    match doc.set_curated(config::CuratedDirective::AudioDevice, &form.adevice) {
-        Ok(()) => {
-            write_config(&path, doc.serialize());
-            Redirect::to("/directives").into_response()
+
+    // All-or-nothing: validate every field before writing anything, so an
+    // invalid PTT value can't leave a config with only some fields updated.
+    let mut fields = Vec::new();
+    let mut any_error = false;
+    for spec in CURATED_FIELDS {
+        let value = form.get(spec.name).cloned().unwrap_or_default();
+        match doc.set_curated(spec.directive, &value) {
+            Ok(()) => fields.push(views::DirectiveField {
+                label: spec.label,
+                name: spec.name,
+                value,
+                error: None,
+            }),
+            Err(err) => {
+                any_error = true;
+                fields.push(views::DirectiveField {
+                    label: spec.label,
+                    name: spec.name,
+                    value,
+                    error: Some(err.message()),
+                });
+            }
         }
-        Err(validation_err) => Html(views::page(&views::directives_editor(
-            &form.adevice,
-            Some(validation_err.message()),
-        )))
-        .into_response(),
     }
+
+    if any_error {
+        return Html(views::page(&views::directives_editor(&fields))).into_response();
+    }
+
+    write_config(&path, doc.serialize());
+    Redirect::to("/directives").into_response()
 }
 
 fn cli_bind_arg(args: &[String]) -> Option<String> {

@@ -100,22 +100,42 @@ pub fn raw_editor(path: &Path, content: &str) -> String {
     )
 }
 
-pub fn directives_editor(adevice: &str, error: Option<&str>) -> String {
-    let error_html = error
-        .map(|msg| format!(r#"<p class="error">{}</p>"#, html_escape(msg)))
-        .unwrap_or_default();
+pub struct DirectiveField {
+    pub label: &'static str,
+    pub name: &'static str,
+    pub value: String,
+    pub error: Option<&'static str>,
+}
+
+pub fn directives_editor(fields: &[DirectiveField]) -> String {
+    let fields_html: String = fields
+        .iter()
+        .map(|f| {
+            let error_html = f
+                .error
+                .map(|msg| format!(r#"<p class="error">{}</p>"#, html_escape(msg)))
+                .unwrap_or_default();
+            format!(
+                r#"<label>{}
+<input type="text" name="{}" value="{}">
+</label>
+{}"#,
+                html_escape(f.label),
+                f.name,
+                html_escape(&f.value),
+                error_html
+            )
+        })
+        .collect();
+
     format!(
         r#"<h1>Edit directives</h1>
-{}
 <form method="post" action="/directives">
-<label>Audio device (ADEVICE)
-<input type="text" name="adevice" value="{}">
-</label>
+{}
 <button type="submit">Save</button>
 </form>
 <p><a href="/">Back</a></p>"#,
-        error_html,
-        html_escape(adevice)
+        fields_html
     )
 }
 
