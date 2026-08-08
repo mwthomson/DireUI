@@ -145,6 +145,7 @@ pub enum CuratedDirective {
     KissPort,
     PBeacon,
     CBeacon,
+    Digipeat,
 }
 
 impl CuratedDirective {
@@ -186,6 +187,15 @@ impl CuratedDirective {
                 keyword: "CBEACON",
                 validate: validate_generic,
             },
+            // DIGIPEAT's leading token (from-chan) is always a channel
+            // number; the remaining to-chan/aliases/wide/preemptive tokens
+            // share validate_numeric_prefix's rationale for not going
+            // further — same leading-numeric-token shape as MODEM's baud
+            // rate, no authoritative grammar to check the rest against.
+            CuratedDirective::Digipeat => DirectiveSpec {
+                keyword: "DIGIPEAT",
+                validate: validate_numeric_prefix,
+            },
         }
     }
 }
@@ -205,9 +215,7 @@ impl ValidationError {
             ValidationError::Empty => "Value cannot be empty.",
             ValidationError::ContainsNewline => "Value cannot contain line breaks.",
             ValidationError::NotANumber => "Value must be a whole number.",
-            ValidationError::MissingNumericPrefix => {
-                "Value must start with a number (the baud rate)."
-            }
+            ValidationError::MissingNumericPrefix => "Value must start with a number.",
             ValidationError::OutOfRange => "Value must be a port number from 0 to 65535.",
         }
     }
@@ -233,10 +241,12 @@ fn validate_non_negative_integer(value: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-// MODEM's first token is always a numeric baud rate; Direwolf allows
-// additional trailing parameters (waveform type, etc.) whose grammar isn't
-// validated here for the same reason ADEVICE's value isn't validated
-// beyond generic checks — no authoritative grammar to check them against.
+// Shared by directives whose first token is always a confirmed-numeric
+// value — MODEM's baud rate, DIGIPEAT's from-chan. Direwolf allows
+// additional trailing parameters (MODEM's waveform type, DIGIPEAT's
+// to-chan/aliases/wide/preemptive) whose grammar isn't validated here for
+// the same reason ADEVICE's value isn't validated beyond generic checks —
+// no authoritative grammar to check them against.
 fn validate_numeric_prefix(value: &str) -> Result<(), ValidationError> {
     validate_generic(value)?;
     let first_token = value.split_whitespace().next().unwrap_or("");
@@ -540,6 +550,24 @@ mod tests {
         assert_eq!(
             doc.serialize(),
             "# rig notes\nCBEACON delay=1 info=\"Updated\"\n\nADEVICE plughw:0,0\n"
+        );
+    }
+
+    #[test]
+    fn set_curated_updates_digipeat_and_preserves_everything_else() {
+        let input = "# rig notes\nDIGIPEAT 0 0 WIDE1-1,WIDE2-1 TRACE\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.set_curated(CuratedDirective::Digipeat, "0 1 WIDE1-1,WIDE2-1 TRACE")
+            .unwrap();
+
+        assert_eq!(
+            doc.get_curated(CuratedDirective::Digipeat),
+            Some("0 1 WIDE1-1,WIDE2-1 TRACE")
+        );
+        assert_eq!(
+            doc.serialize(),
+            "# rig notes\nDIGIPEAT 0 1 WIDE1-1,WIDE2-1 TRACE\n\nADEVICE plughw:0,0\n"
         );
     }
 }

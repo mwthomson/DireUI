@@ -210,6 +210,11 @@ const CURATED_FIELDS: &[FormFieldSpec] = &[
         name: "cbeacon",
         directive: config::CuratedDirective::CBeacon,
     },
+    FormFieldSpec {
+        label: "Digipeat (DIGIPEAT)",
+        name: "digipeat",
+        directive: config::CuratedDirective::Digipeat,
+    },
 ];
 
 async fn edit_directives(State(ctx): State<AppContext>) -> Html<String> {
