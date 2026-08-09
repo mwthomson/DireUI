@@ -124,6 +124,21 @@ impl Document {
         value: &str,
     ) -> Result<(), ValidationError> {
         let spec = directive.spec();
+
+        // A blank value for a directive with no meaningful existing value
+        // — absent entirely, or present as a bare line with no arguments
+        // — is not an error, just means the user isn't using that
+        // directive. Only a blank value for a directive that already has
+        // a real value is rejected (see set_curated_rejects_an_empty_value):
+        // clearing an existing directive's value through this form isn't
+        // supported.
+        let has_existing_value = self
+            .get_directive(spec.keyword)
+            .is_some_and(|v| !v.trim().is_empty());
+        if value.trim().is_empty() && !has_existing_value {
+            return Ok(());
+        }
+
         (spec.validate)(value)?;
         self.set_directive(spec.keyword, value);
         Ok(())
@@ -376,6 +391,57 @@ mod tests {
 
         doc.set_curated(CuratedDirective::AudioDevice, "").ok();
 
+        assert_eq!(doc.serialize(), input);
+    }
+
+    #[test]
+    fn set_curated_is_a_no_op_when_blank_and_the_directive_was_never_set() {
+        let input = "# rig notes\nCHANNEL 0\n";
+        let mut doc = Document::parse(input);
+
+        let result = doc.set_curated(CuratedDirective::CBeacon, "");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(doc.get_curated(CuratedDirective::CBeacon), None);
+        assert_eq!(doc.serialize(), input);
+    }
+
+    #[test]
+    fn set_curated_is_a_no_op_when_whitespace_only_and_the_directive_was_never_set() {
+        let input = "CHANNEL 0\n";
+        let mut doc = Document::parse(input);
+
+        let result = doc.set_curated(CuratedDirective::PBeacon, "   ");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(doc.get_curated(CuratedDirective::PBeacon), None);
+        assert_eq!(doc.serialize(), input);
+    }
+
+    #[test]
+    fn set_curated_is_a_no_op_when_blank_and_the_directive_line_is_present_but_valueless() {
+        // A bare directive line with no arguments (e.g. hand-written, or
+        // left over from another tool) has no meaningful value even
+        // though get_directive finds the line — treat it the same as
+        // "never set" rather than rejecting it as a cleared field.
+        let input = "CHANNEL 0\nCBEACON\n";
+        let mut doc = Document::parse(input);
+
+        let result = doc.set_curated(CuratedDirective::CBeacon, "");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(doc.serialize(), input);
+    }
+
+    #[test]
+    fn set_curated_no_op_exemption_applies_to_numerically_validated_directives_too() {
+        let input = "ADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        let result = doc.set_curated(CuratedDirective::Digipeat, "");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(doc.get_curated(CuratedDirective::Digipeat), None);
         assert_eq!(doc.serialize(), input);
     }
 
