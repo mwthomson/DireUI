@@ -1,0 +1,5 @@
+# Process control and monitoring are systemd-mediated, not owned by DireUI
+
+v2 adds the ability to start/stop/restart the Direwolf process DireUI manages, and to show live status (running / crashed / last error). Two shapes were available: DireUI spawns and directly supervises Direwolf as a child process, or DireUI treats Direwolf as a service already managed by systemd and shells out to `systemctl` for control and reads `journalctl` for status. We chose the latter. DireUI's target deployment (a headless Pi or Linux box at a radio site) commonly already runs Direwolf as a systemd unit, so shelling out reuses supervision systemd already provides — crash restart, log capture, PID/lock handling — instead of DireUI reimplementing process ownership itself.
+
+The tradeoff: v2's process control and monitoring features only function when Direwolf is actually running under systemd. A manually-launched or otherwise non-systemd-managed Direwolf process is invisible to these features. Ticket breakdown needs to define what DireUI shows when no matching systemd unit is found, rather than silently failing.
