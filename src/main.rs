@@ -23,6 +23,7 @@ use state::AppState;
 use store::StateStore;
 
 const HTMX_JS: &[u8] = include_bytes!("../assets/vendor/htmx/htmx.min.js");
+const STYLE_CSS: &[u8] = include_bytes!("../assets/style.css");
 
 #[derive(Clone)]
 struct AppContext {
@@ -57,6 +58,10 @@ async fn index(State(ctx): State<AppContext>) -> Html<String> {
 
 async fn htmx_js() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "application/javascript")], HTMX_JS)
+}
+
+async fn style_css() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/css")], STYLE_CSS)
 }
 
 async fn status() -> Html<&'static str> {
@@ -328,6 +333,7 @@ async fn main() {
         .route("/directives", get(edit_directives).post(save_directives))
         .route("/status", get(status))
         .route("/vendor/htmx/htmx.min.js", get(htmx_js))
+        .route("/style.css", get(style_css))
         .with_state(ctx);
 
     let listener = tokio::net::TcpListener::bind(addr)
