@@ -53,7 +53,7 @@ async fn index(State(ctx): State<AppContext>) -> Html<String> {
     } else {
         views::config_manager(&state)
     };
-    Html(views::page(&body))
+    Html(views::page(&body, state.active_config.as_deref()))
 }
 
 async fn htmx_js() -> impl IntoResponse {
@@ -126,20 +126,23 @@ fn write_config(ctx: &AppContext, path: &std::path::Path, content: String) {
 /// Reads the Active Config's content, or a rendered error page explaining why not.
 fn read_active_config(ctx: &AppContext) -> Result<(PathBuf, String), Html<String>> {
     let Some(path) = active_config_path(ctx) else {
-        return Err(Html(views::page(&views::no_active_config())));
+        return Err(Html(views::page(&views::no_active_config(), None)));
     };
     match std::fs::read_to_string(&path) {
         Ok(content) => Ok((path, content)),
-        Err(err) => Err(Html(views::page(&views::error(&format!(
-            "Could not read {}: {err}",
-            path.display()
-        ))))),
+        Err(err) => Err(Html(views::page(
+            &views::error(&format!("Could not read {}: {err}", path.display())),
+            Some(&path),
+        ))),
     }
 }
 
 async fn edit_raw_config(State(ctx): State<AppContext>) -> Html<String> {
     match read_active_config(&ctx) {
-        Ok((path, content)) => Html(views::page(&views::raw_editor(&path, &content))),
+        Ok((path, content)) => Html(views::page(
+            &views::raw_editor(&path, &content),
+            Some(&path),
+        )),
         Err(page) => page,
     }
 }
@@ -258,7 +261,7 @@ const CURATED_FIELDS: &[FormFieldSpec] = &[
 
 async fn edit_directives(State(ctx): State<AppContext>) -> Html<String> {
     match read_active_config(&ctx) {
-        Ok((_, content)) => {
+        Ok((path, content)) => {
             let doc = config::Document::parse(&content);
             let fields: Vec<views::DirectiveField> = CURATED_FIELDS
                 .iter()
@@ -267,7 +270,7 @@ async fn edit_directives(State(ctx): State<AppContext>) -> Html<String> {
                     spec.to_directive_field(value, None)
                 })
                 .collect();
-            Html(views::page(&views::directives_editor(&fields)))
+            Html(views::page(&views::directives_editor(&fields), Some(&path)))
         }
         Err(page) => page,
     }
@@ -299,7 +302,7 @@ async fn save_directives(
     }
 
     if any_error {
-        return Html(views::page(&views::directives_editor(&fields))).into_response();
+        return Html(views::page(&views::directives_editor(&fields), Some(&path))).into_response();
     }
 
     write_config(&ctx, &path, doc.serialize());

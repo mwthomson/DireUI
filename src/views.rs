@@ -9,7 +9,13 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-pub fn page(body: &str) -> String {
+// Present on every page so a config being edited elsewhere (raw-text editor,
+// Curated Directive form) never loses sight of which Config File it's
+// editing, and always has a consistent way back to the config manager.
+pub fn page(body: &str, active_config: Option<&Path>) -> String {
+    let active = active_config
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "none".to_string());
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -21,13 +27,21 @@ pub fn page(body: &str) -> String {
 <script src="/vendor/htmx/htmx.min.js"></script>
 </head>
 <body>
-<header class="site-header"><p class="wordmark">DireUI</p></header>
+<header class="site-header">
+<p class="wordmark">DireUI</p>
+<nav class="site-nav">
+<span class="site-active-config">Active config: <span class="config-path">{active}</span></span>
+<a href="/">Configs</a>
+</nav>
+</header>
 <main class="page">
 {body}
 </main>
 </body>
 </html>
-"#
+"#,
+        active = html_escape(&active),
+        body = body
     )
 }
 
@@ -144,12 +158,6 @@ fn highlight_differing_segments(paths: &[String]) -> Vec<String> {
 }
 
 pub fn config_manager(state: &AppState) -> String {
-    let active = state
-        .active_config
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "none".to_string());
-
     let displays: Vec<String> = state
         .known_configs
         .iter()
@@ -178,7 +186,6 @@ pub fn config_manager(state: &AppState) -> String {
 
     format!(
         r#"<h1>Configs</h1>
-<p class="meta">Active config: <span class="config-path">{}</span></p>
 <ul class="config-list">{}</ul>
 {}
 {}
@@ -187,7 +194,6 @@ pub fn config_manager(state: &AppState) -> String {
 <a href="/raw">Edit raw config</a>
 <button hx-get="/status" hx-swap="outerHTML">Check server status</button>
 </nav>"#,
-        html_escape(&active),
         list_items,
         add_config_form("", "/home/user/aprs.conf", "Add config"),
         backup_preference_toggle(state.backup_preference)
@@ -201,8 +207,7 @@ pub fn raw_editor(path: &Path, content: &str) -> String {
 <form method="post" action="/raw">
 <textarea class="raw-editor" name="content">{}</textarea>
 <button type="submit">Save</button>
-</form>
-<a class="back-link" href="/">Back</a>"#,
+</form>"#,
         html_escape(&path.display().to_string()),
         html_escape(content)
     )
@@ -292,24 +297,21 @@ pub fn directives_editor(fields: &[DirectiveField]) -> String {
 <form method="post" action="/directives">
 {}
 <button type="submit">Save</button>
-</form>
-<a class="back-link" href="/">Back</a>"#,
+</form>"#,
         groups_html
     )
 }
 
 pub fn no_active_config() -> String {
     r#"<h1>No active config</h1>
-<p>Add a config file before editing.</p>
-<a class="back-link" href="/">Back</a>"#
+<p>Add a config file before editing.</p>"#
         .to_string()
 }
 
 pub fn error(message: &str) -> String {
     format!(
         r#"<h1>Error</h1>
-<p class="error-text">{}</p>
-<a class="back-link" href="/">Back</a>"#,
+<p class="error-text">{}</p>"#,
         html_escape(message)
     )
 }
@@ -318,6 +320,41 @@ pub fn error(message: &str) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn page_shows_the_active_config_path_in_the_persistent_header() {
+        let html = page(
+            "<p>body</p>",
+            Some(Path::new("/home/pi/aprs-config/direwolf.conf")),
+        );
+
+        assert!(html.contains("/home/pi/aprs-config/direwolf.conf"));
+    }
+
+    #[test]
+    fn page_shows_none_when_there_is_no_active_config() {
+        let html = page("<p>body</p>", None);
+
+        assert!(html.contains("none"));
+    }
+
+    #[test]
+    fn page_always_links_back_to_the_config_manager() {
+        let html = page("<p>body</p>", None);
+
+        assert!(html.contains(r#"<a href="/">Configs</a>"#));
+    }
+
+    #[test]
+    fn page_escapes_html_in_the_active_config_path() {
+        let html = page(
+            "<p>body</p>",
+            Some(Path::new("/home/<script>/direwolf.conf")),
+        );
+
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
 
     #[test]
     fn highlight_differing_segments_marks_only_the_segment_that_differs() {

@@ -47,6 +47,11 @@ body {
 }
 
 .site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
   padding: 1rem 1.5rem;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
@@ -59,6 +64,22 @@ body {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink);
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+
+.site-active-config {
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+
+.site-active-config .config-path {
+  color: var(--ink-dim);
 }
 
 .page {
@@ -293,11 +314,6 @@ a:hover {
   gap: 0.65rem;
   align-items: flex-start;
   margin-bottom: 1.5rem;
-}
-
-.back-link {
-  display: inline-block;
-  margin-top: 0.5rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
