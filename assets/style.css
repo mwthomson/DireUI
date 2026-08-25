@@ -62,7 +62,7 @@ body {
 }
 
 .page {
-  max-width: 640px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 2rem 1.5rem 4rem;
 }
@@ -136,6 +136,23 @@ p {
   white-space: nowrap;
 }
 
+.field-group {
+  margin-bottom: 1.5rem;
+}
+
+.field-group-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 0 0 0.5rem;
+}
+
+.field-group .panel {
+  margin-bottom: 0;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -192,6 +209,13 @@ textarea:focus {
   min-height: 60vh;
   resize: vertical;
   line-height: 1.5;
+}
+
+.field-textarea {
+  resize: vertical;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .error-text {

@@ -167,57 +167,91 @@ async fn save_raw_config(
 struct FormFieldSpec {
     label: &'static str,
     name: &'static str,
+    group: &'static str,
+    multiline: bool,
     directive: config::CuratedDirective,
 }
 
+impl FormFieldSpec {
+    fn to_directive_field(&self, value: String, error: Option<&'static str>) -> views::DirectiveField {
+        views::DirectiveField {
+            label: self.label,
+            name: self.name,
+            group: self.group,
+            multiline: self.multiline,
+            value,
+            error,
+        }
+    }
+}
+
 // The single source of truth for which curated directives the /directives
-// form shows and how form field names map to them. edit_directives and
-// save_directives both read from this rather than each enumerating the
+// form shows, how form field names map to them, and which of the five
+// directive areas each belongs to for grouping in the UI. edit_directives
+// and save_directives both read from this rather than each enumerating the
 // fields themselves.
 const CURATED_FIELDS: &[FormFieldSpec] = &[
     FormFieldSpec {
         label: "Audio device (ADEVICE)",
         name: "adevice",
+        group: "Audio device",
+        multiline: false,
         directive: config::CuratedDirective::AudioDevice,
     },
     FormFieldSpec {
         label: "Channel (CHANNEL)",
         name: "channel",
+        group: "Channel, modem & PTT",
+        multiline: false,
         directive: config::CuratedDirective::Channel,
     },
     FormFieldSpec {
         label: "Modem (MODEM)",
         name: "modem",
+        group: "Channel, modem & PTT",
+        multiline: false,
         directive: config::CuratedDirective::Modem,
     },
     FormFieldSpec {
         label: "PTT",
         name: "ptt",
+        group: "Channel, modem & PTT",
+        multiline: false,
         directive: config::CuratedDirective::Ptt,
     },
     FormFieldSpec {
         label: "AGW network port (AGWPORT)",
         name: "agwport",
+        group: "Network ports",
+        multiline: false,
         directive: config::CuratedDirective::AgwPort,
     },
     FormFieldSpec {
         label: "KISS network port (KISSPORT)",
         name: "kissport",
+        group: "Network ports",
+        multiline: false,
         directive: config::CuratedDirective::KissPort,
     },
     FormFieldSpec {
         label: "Position beacon (PBEACON)",
         name: "pbeacon",
+        group: "APRS beaconing",
+        multiline: true,
         directive: config::CuratedDirective::PBeacon,
     },
     FormFieldSpec {
         label: "Custom beacon (CBEACON)",
         name: "cbeacon",
+        group: "APRS beaconing",
+        multiline: true,
         directive: config::CuratedDirective::CBeacon,
     },
     FormFieldSpec {
         label: "Digipeat (DIGIPEAT)",
         name: "digipeat",
+        group: "Digipeating",
+        multiline: false,
         directive: config::CuratedDirective::Digipeat,
     },
 ];
@@ -228,11 +262,9 @@ async fn edit_directives(State(ctx): State<AppContext>) -> Html<String> {
             let doc = config::Document::parse(&content);
             let fields: Vec<views::DirectiveField> = CURATED_FIELDS
                 .iter()
-                .map(|spec| views::DirectiveField {
-                    label: spec.label,
-                    name: spec.name,
-                    value: doc.get_curated(spec.directive).unwrap_or("").to_string(),
-                    error: None,
+                .map(|spec| {
+                    let value = doc.get_curated(spec.directive).unwrap_or("").to_string();
+                    spec.to_directive_field(value, None)
                 })
                 .collect();
             Html(views::page(&views::directives_editor(&fields)))
@@ -258,20 +290,10 @@ async fn save_directives(
     for spec in CURATED_FIELDS {
         let value = form.get(spec.name).cloned().unwrap_or_default();
         match doc.set_curated(spec.directive, &value) {
-            Ok(()) => fields.push(views::DirectiveField {
-                label: spec.label,
-                name: spec.name,
-                value,
-                error: None,
-            }),
+            Ok(()) => fields.push(spec.to_directive_field(value, None)),
             Err(err) => {
                 any_error = true;
-                fields.push(views::DirectiveField {
-                    label: spec.label,
-                    name: spec.name,
-                    value,
-                    error: Some(err.message()),
-                });
+                fields.push(spec.to_directive_field(value, Some(err.message())));
             }
         }
     }

@@ -127,6 +127,11 @@ pub fn raw_editor(path: &Path, content: &str) -> String {
 pub struct DirectiveField {
     pub label: &'static str,
     pub name: &'static str,
+    pub group: &'static str,
+    // Directives whose values can run long (e.g. PBEACON's full parameter
+    // string) render as a wrapping textarea instead of a single-line input,
+    // so the whole value stays visible rather than scrolling off-screen.
+    pub multiline: bool,
     pub value: String,
     pub error: Option<&'static str>,
 }
@@ -141,29 +146,59 @@ fn split_label(label: &str) -> (&str, Option<&str>) {
     }
 }
 
-pub fn directives_editor(fields: &[DirectiveField]) -> String {
-    let fields_html: String = fields
-        .iter()
-        .map(|f| {
-            let (label_text, keyword) = split_label(f.label);
-            let badge_html = keyword
-                .map(|k| format!(r#"<span class="field-badge">{}</span>"#, html_escape(k)))
-                .unwrap_or_default();
-            let error_html = f
-                .error
-                .map(|msg| format!(r#"<p class="error-text">{}</p>"#, html_escape(msg)))
-                .unwrap_or_default();
-            format!(
-                r#"<div class="field">
+fn directive_field_html(f: &DirectiveField) -> String {
+    let (label_text, keyword) = split_label(f.label);
+    let badge_html = keyword
+        .map(|k| format!(r#"<span class="field-badge">{}</span>"#, html_escape(k)))
+        .unwrap_or_default();
+    let error_html = f
+        .error
+        .map(|msg| format!(r#"<p class="error-text">{}</p>"#, html_escape(msg)))
+        .unwrap_or_default();
+    let input_html = if f.multiline {
+        format!(
+            r#"<textarea class="field-textarea" id="{name}" name="{name}" rows="2">{value}</textarea>"#,
+            name = f.name,
+            value = html_escape(&f.value)
+        )
+    } else {
+        format!(
+            r#"<input type="text" id="{name}" name="{name}" value="{value}">"#,
+            name = f.name,
+            value = html_escape(&f.value)
+        )
+    };
+    format!(
+        r#"<div class="field">
 <label class="field-label" for="{name}">{label}{badge}</label>
-<input type="text" id="{name}" name="{name}" value="{value}">
+{input}
 {error}
 </div>"#,
-                name = f.name,
-                label = html_escape(label_text),
-                badge = badge_html,
-                value = html_escape(&f.value),
-                error = error_html
+        name = f.name,
+        label = html_escape(label_text),
+        badge = badge_html,
+        input = input_html,
+        error = error_html
+    )
+}
+
+// Fields already arrive ordered by directive area (see CURATED_FIELDS), so
+// grouping is a matter of chunking on consecutive equal `group` values
+// rather than sorting/bucketing by group name.
+pub fn directives_editor(fields: &[DirectiveField]) -> String {
+    let groups_html: String = fields
+        .chunk_by(|a, b| a.group == b.group)
+        .map(|group_fields| {
+            let fields_html: String = group_fields.iter().map(directive_field_html).collect();
+            format!(
+                r#"<section class="field-group">
+<h2 class="field-group-title">{}</h2>
+<div class="panel">
+{fields_html}
+</div>
+</section>
+"#,
+                html_escape(group_fields[0].group)
             )
         })
         .collect();
@@ -171,13 +206,11 @@ pub fn directives_editor(fields: &[DirectiveField]) -> String {
     format!(
         r#"<h1>Edit directives</h1>
 <form method="post" action="/directives">
-<div class="panel">
 {}
-</div>
 <button type="submit">Save</button>
 </form>
 <a class="back-link" href="/">Back</a>"#,
-        fields_html
+        groups_html
     )
 }
 
@@ -195,4 +228,75 @@ pub fn error(message: &str) -> String {
 <a class="back-link" href="/">Back</a>"#,
         html_escape(message)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(group: &'static str, name: &'static str) -> DirectiveField {
+        DirectiveField {
+            label: name,
+            name,
+            group,
+            multiline: false,
+            value: String::new(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn multiline_fields_render_as_a_wrapping_textarea_not_a_single_line_input() {
+        let mut f = field("APRS beaconing", "pbeacon");
+        f.multiline = true;
+        f.value = "delay=1 every=30 lat=42^37.14N long=071^20.83W".to_string();
+
+        let html = directives_editor(std::slice::from_ref(&f));
+
+        assert!(html.contains(r#"<textarea class="field-textarea" id="pbeacon" name="pbeacon" rows="2">delay=1 every=30 lat=42^37.14N long=071^20.83W</textarea>"#));
+        assert!(!html.contains(r#"<input type="text" id="pbeacon""#));
+    }
+
+    #[test]
+    fn directives_editor_renders_one_heading_per_group_in_order() {
+        let fields = [
+            field("Audio device", "adevice"),
+            field("Channel, modem & PTT", "channel"),
+            field("Channel, modem & PTT", "modem"),
+            field("Channel, modem & PTT", "ptt"),
+        ];
+
+        let html = directives_editor(&fields);
+
+        let audio_pos = html.find("Audio device").unwrap();
+        let channel_pos = html.find("Channel, modem &amp; PTT").unwrap();
+        assert!(audio_pos < channel_pos);
+        // Exactly one heading per group, not one per field.
+        assert_eq!(html.matches("Channel, modem &amp; PTT").count(), 1);
+    }
+
+    #[test]
+    fn directives_editor_places_each_field_within_its_group_section() {
+        let fields = [field("Audio device", "adevice"), field("Network ports", "agwport")];
+
+        let html = directives_editor(&fields);
+
+        let audio_heading = html.find("Audio device").unwrap();
+        let adevice_field = html.find(r#"id="adevice""#).unwrap();
+        let network_heading = html.find("Network ports").unwrap();
+        let agwport_field = html.find(r#"id="agwport""#).unwrap();
+
+        assert!(audio_heading < adevice_field);
+        assert!(adevice_field < network_heading);
+        assert!(network_heading < agwport_field);
+    }
+
+    #[test]
+    fn split_label_extracts_trailing_keyword() {
+        assert_eq!(
+            split_label("Audio device (ADEVICE)"),
+            ("Audio device", Some("ADEVICE"))
+        );
+        assert_eq!(split_label("PTT"), ("PTT", None));
+    }
 }
