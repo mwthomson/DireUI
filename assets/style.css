@@ -124,6 +124,13 @@ p {
   word-break: break-all;
 }
 
+.config-path-diff {
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
 .config-badge {
   font-family: var(--font-mono);
   font-size: 0.7rem;

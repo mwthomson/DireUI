@@ -68,6 +68,81 @@ fn backup_preference_toggle(enabled: bool) -> String {
     )
 }
 
+// Counts how many leading elements are the same, position by position,
+// across every sequence, stopping after `limit` positions.
+fn count_matching_prefix(sequences: &[Vec<&str>], limit: usize) -> usize {
+    (0..limit)
+        .take_while(|&i| sequences.iter().all(|s| s[i] == sequences[0][i]))
+        .count()
+}
+
+// Splits each path on '/' and finds the run of leading and trailing segments
+// shared by every path in the list, leaving whatever's left in the middle as
+// the part that actually differs between them. This is a positional
+// heuristic (aligned by segment index from each end), not a full diff — with
+// paths of differing directory depth it can sweep a shared segment name into
+// the "differing" middle if its position shifted, but it never misrenders a
+// path, and it correctly isolates the differing segment(s) for the common
+// case this mitigation targets: same-depth paths differing in one component.
+fn common_segment_range(segments: &[Vec<&str>]) -> (usize, usize) {
+    if segments.len() < 2 {
+        return (segments.first().map_or(0, |s| s.len()), 0);
+    }
+
+    let min_len = segments.iter().map(|s| s.len()).min().unwrap();
+    let prefix_len = count_matching_prefix(segments, min_len);
+
+    let max_suffix = min_len - prefix_len;
+    let reversed: Vec<Vec<&str>> = segments
+        .iter()
+        .map(|s| s.iter().rev().copied().collect())
+        .collect();
+    let suffix_len = count_matching_prefix(&reversed, max_suffix);
+
+    (prefix_len, suffix_len)
+}
+
+// With more than one saved config path, long, mostly-identical paths (e.g.
+// two entries differing only in one directory name) are hard to tell apart
+// at a glance. Wraps the segment(s) that actually differ across `paths` in a
+// `config-path-diff` span so the difference stands out without reading the
+// full path character by character. Output is HTML-escaped and safe to
+// inline directly.
+fn highlight_differing_segments(paths: &[String]) -> Vec<String> {
+    let segments: Vec<Vec<&str>> = paths.iter().map(|p| p.split('/').collect()).collect();
+    let (prefix_len, suffix_len) = common_segment_range(&segments);
+
+    segments
+        .iter()
+        .map(|s| {
+            let suffix_start = s.len() - suffix_len;
+            let groups: [(&[&str], Option<&str>); 3] = [
+                (&s[..prefix_len], None),
+                (&s[prefix_len..suffix_start], Some("config-path-diff")),
+                (&s[suffix_start..], None),
+            ];
+
+            let mut html = String::new();
+            let mut first = true;
+            for (group, class) in groups {
+                if group.is_empty() {
+                    continue;
+                }
+                if !first {
+                    html.push('/');
+                }
+                first = false;
+                let text = html_escape(&group.join("/"));
+                match class {
+                    Some(c) => html.push_str(&format!(r#"<span class="{c}">{text}</span>"#)),
+                    None => html.push_str(&text),
+                }
+            }
+            html
+        })
+        .collect()
+}
+
 pub fn config_manager(state: &AppState) -> String {
     let active = state
         .active_config
@@ -75,18 +150,27 @@ pub fn config_manager(state: &AppState) -> String {
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "none".to_string());
 
+    let displays: Vec<String> = state
+        .known_configs
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    let highlighted = highlight_differing_segments(&displays);
+
     let list_items: String = state
         .known_configs
         .iter()
-        .map(|p| {
-            let display = html_escape(&p.display().to_string());
+        .zip(displays.iter())
+        .zip(highlighted.iter())
+        .map(|((p, display), path_html)| {
+            let title = html_escape(display);
             if state.active_config.as_deref() == Some(p.as_path()) {
                 format!(
-                    r#"<li><span class="config-path">{display}</span><span class="config-badge">active</span></li>"#
+                    r#"<li><span class="config-path" title="{title}">{path_html}</span><span class="config-badge">active</span></li>"#
                 )
             } else {
                 format!(
-                    r#"<li><span class="config-path">{display}</span><form method="post" action="/configs/active"><input type="hidden" name="path" value="{display}"><button type="submit">Switch to this</button></form></li>"#
+                    r#"<li><span class="config-path" title="{title}">{path_html}</span><form method="post" action="/configs/active"><input type="hidden" name="path" value="{title}"><button type="submit">Switch to this</button></form></li>"#
                 )
             }
         })
@@ -233,6 +317,152 @@ pub fn error(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn highlight_differing_segments_marks_only_the_segment_that_differs() {
+        let paths = [
+            "/home/pi/aprs-config/direwolf.conf".to_string(),
+            "/home/pi/packet-config/direwolf.conf".to_string(),
+        ];
+
+        let html = highlight_differing_segments(&paths);
+
+        assert_eq!(
+            html[0],
+            r#"/home/pi/<span class="config-path-diff">aprs-config</span>/direwolf.conf"#
+        );
+        assert_eq!(
+            html[1],
+            r#"/home/pi/<span class="config-path-diff">packet-config</span>/direwolf.conf"#
+        );
+    }
+
+    #[test]
+    fn highlight_differing_segments_leaves_a_single_path_unmarked() {
+        let paths = ["/home/pi/.direwolf.conf".to_string()];
+
+        let html = highlight_differing_segments(&paths);
+
+        assert_eq!(html[0], "/home/pi/.direwolf.conf");
+        assert!(!html[0].contains("config-path-diff"));
+    }
+
+    #[test]
+    fn highlight_differing_segments_marks_nothing_for_identical_paths() {
+        let paths = [
+            "/home/pi/.direwolf.conf".to_string(),
+            "/home/pi/.direwolf.conf".to_string(),
+        ];
+
+        let html = highlight_differing_segments(&paths);
+
+        assert!(!html[0].contains("config-path-diff"));
+        assert!(!html[1].contains("config-path-diff"));
+    }
+
+    #[test]
+    fn highlight_differing_segments_marks_the_whole_path_when_nothing_is_shared() {
+        let paths = ["/aaa/one.conf".to_string(), "/ccc/two.conf".to_string()];
+
+        let html = highlight_differing_segments(&paths);
+
+        assert_eq!(
+            html[0],
+            r#"/<span class="config-path-diff">aaa/one.conf</span>"#
+        );
+        assert_eq!(
+            html[1],
+            r#"/<span class="config-path-diff">ccc/two.conf</span>"#
+        );
+    }
+
+    #[test]
+    fn highlight_differing_segments_still_renders_correctly_when_paths_differ_in_depth() {
+        // `common_segment_range` is a positional heuristic: paths of
+        // different depth can shift a shared segment name (here "pi") out
+        // of alignment, sweeping it into the highlighted middle instead of
+        // recognizing it as shared. The highlight is broader than a true
+        // diff would produce, but every path still reconstructs byte-for-
+        // byte, and the real point of difference is still covered.
+        let paths = [
+            "/home/pi/aprs/direwolf.conf".to_string(),
+            "/home/extra/pi/packet/direwolf.conf".to_string(),
+        ];
+
+        let html = highlight_differing_segments(&paths);
+
+        assert_eq!(
+            html[0],
+            r#"/home/<span class="config-path-diff">pi/aprs</span>/direwolf.conf"#
+        );
+        assert_eq!(
+            html[1],
+            r#"/home/<span class="config-path-diff">extra/pi/packet</span>/direwolf.conf"#
+        );
+    }
+
+    #[test]
+    fn highlight_differing_segments_escapes_html_in_paths() {
+        let paths = [
+            "/home/<a>/direwolf.conf".to_string(),
+            "/home/<b>/direwolf.conf".to_string(),
+        ];
+
+        let html = highlight_differing_segments(&paths);
+
+        assert_eq!(
+            html[0],
+            r#"/home/<span class="config-path-diff">&lt;a&gt;</span>/direwolf.conf"#
+        );
+    }
+
+    #[test]
+    fn config_manager_marks_the_differing_segment_between_two_known_configs() {
+        let state = AppState {
+            known_configs: vec![
+                PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
+                PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+            ],
+            active_config: Some(PathBuf::from("/home/pi/aprs-config/direwolf.conf")),
+            backup_preference: false,
+        };
+
+        let html = config_manager(&state);
+
+        assert!(html.contains(r#"<span class="config-path-diff">aprs-config</span>"#));
+        assert!(html.contains(r#"<span class="config-path-diff">packet-config</span>"#));
+    }
+
+    #[test]
+    fn config_manager_still_marks_the_active_config_when_paths_are_similar() {
+        let state = AppState {
+            known_configs: vec![
+                PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
+                PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+            ],
+            active_config: Some(PathBuf::from("/home/pi/packet-config/direwolf.conf")),
+            backup_preference: false,
+        };
+
+        let html = config_manager(&state);
+
+        assert!(html.contains(r#"<span class="config-badge">active</span>"#));
+        assert!(html.contains(r#"<span class="config-path-diff">packet-config</span>"#));
+    }
+
+    #[test]
+    fn config_manager_shows_the_full_path_as_a_title_attribute() {
+        let state = AppState {
+            known_configs: vec![PathBuf::from("/home/pi/aprs-config/direwolf.conf")],
+            active_config: Some(PathBuf::from("/home/pi/aprs-config/direwolf.conf")),
+            backup_preference: false,
+        };
+
+        let html = config_manager(&state);
+
+        assert!(html.contains(r#"title="/home/pi/aprs-config/direwolf.conf""#));
+    }
 
     fn field(group: &'static str, name: &'static str) -> DirectiveField {
         DirectiveField {
