@@ -157,6 +157,12 @@ fn highlight_differing_segments(paths: &[String]) -> Vec<String> {
         .collect()
 }
 
+// Swapped into #server-status by the "Check server status" button. A pill
+// rather than plain text so a status result reads as status, not prose.
+pub fn status_indicator() -> String {
+    r#"<span class="pill status-pill status-ok">Server is running</span>"#.to_string()
+}
+
 pub fn config_manager(state: &AppState) -> String {
     let displays: Vec<String> = state
         .known_configs
@@ -174,7 +180,7 @@ pub fn config_manager(state: &AppState) -> String {
             let title = html_escape(display);
             if state.active_config.as_deref() == Some(p.as_path()) {
                 format!(
-                    r#"<li><span class="config-path" title="{title}">{path_html}</span><span class="config-badge">active</span></li>"#
+                    r#"<li><span class="config-path" title="{title}">{path_html}</span><span class="pill config-badge">active</span></li>"#
                 )
             } else {
                 format!(
@@ -185,15 +191,18 @@ pub fn config_manager(state: &AppState) -> String {
         .collect();
 
     format!(
-        r#"<h1>Configs</h1>
+        r##"<h1>Configs</h1>
 <ul class="config-list">{}</ul>
 {}
 {}
 <nav class="actions">
 <a href="/directives">Edit directives</a>
 <a href="/raw">Edit raw config</a>
-<button hx-get="/status" hx-swap="outerHTML">Check server status</button>
-</nav>"#,
+<div class="status-check">
+<button hx-get="/status" hx-target="#server-status" hx-swap="innerHTML">Check server status</button>
+<span id="server-status" aria-live="polite"></span>
+</div>
+</nav>"##,
         list_items,
         add_config_form("", "/home/user/aprs.conf", "Add config"),
         backup_preference_toggle(state.backup_preference)
@@ -320,6 +329,27 @@ pub fn error(message: &str) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn status_indicator_renders_as_a_distinct_visual_pill_not_plain_text() {
+        let html = status_indicator();
+
+        assert!(html.contains("status-pill"));
+    }
+
+    #[test]
+    fn config_manager_status_button_targets_a_separate_indicator_not_itself() {
+        let state = AppState::default();
+
+        let html = config_manager(&state);
+
+        // The button must survive the swap so it can be clicked again — it
+        // targets a sibling element rather than replacing itself.
+        assert!(html.contains(
+            r##"<button hx-get="/status" hx-target="#server-status" hx-swap="innerHTML">Check server status</button>"##
+        ));
+        assert!(html.contains(r#"<span id="server-status""#));
+    }
 
     #[test]
     fn page_shows_the_active_config_path_in_the_persistent_header() {
@@ -484,7 +514,7 @@ mod tests {
 
         let html = config_manager(&state);
 
-        assert!(html.contains(r#"<span class="config-badge">active</span>"#));
+        assert!(html.contains(r#"<span class="pill config-badge">active</span>"#));
         assert!(html.contains(r#"<span class="config-path-diff">packet-config</span>"#));
     }
 

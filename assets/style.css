@@ -152,16 +152,33 @@ p {
   text-underline-offset: 2px;
 }
 
-.config-badge {
+.pill {
   font-family: var(--font-mono);
   font-size: 0.7rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--signal);
-  border: 1px solid var(--signal);
   border-radius: var(--radius);
   padding: 0.1rem 0.4rem;
   white-space: nowrap;
+}
+
+.config-badge {
+  color: var(--signal);
+  border: 1px solid var(--signal);
+}
+
+.status-check {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Filled, not just outlined like .config-badge, so a status result reads as
+   a distinct kind of indicator rather than echoing the "active" badge. */
+.status-pill.status-ok {
+  background: var(--signal);
+  color: var(--signal-ink);
+  border: 1px solid var(--signal);
 }
 
 .field-group {

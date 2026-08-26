@@ -64,8 +64,8 @@ async fn style_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css")], STYLE_CSS)
 }
 
-async fn status() -> Html<&'static str> {
-    Html("<p>DireUI server is running.</p>")
+async fn status() -> Html<String> {
+    Html(views::status_indicator())
 }
 
 #[derive(Deserialize)]
