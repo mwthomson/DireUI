@@ -80,6 +80,18 @@ impl Document {
         }));
     }
 
+    // Removes only the first matching line, mirroring get_directive/
+    // set_directive's "first occurrence" model (see the NOTE on
+    // get_curated) — a keyword that legitimately repeats (CHANNEL) must
+    // not have every occurrence swept away by clearing the curated field.
+    pub fn remove_directive(&mut self, keyword: &str) {
+        if let Some(pos) = self.lines.iter().position(
+            |line| matches!(line, Line::Directive(d) if d.keyword.eq_ignore_ascii_case(keyword)),
+        ) {
+            self.lines.remove(pos);
+        }
+    }
+
     fn ensure_trailing_newline(&mut self) {
         match self.lines.last_mut() {
             Some(Line::Directive(d)) if d.terminator.is_empty() => {
@@ -142,6 +154,15 @@ impl Document {
         (spec.validate)(value)?;
         self.set_directive(spec.keyword, value);
         Ok(())
+    }
+
+    // The explicit, deliberate counterpart to set_curated's blank-value
+    // rejection: set_curated refuses to blank an already-set directive (see
+    // the NOTE above), so removing one back to unset needs its own action
+    // rather than overloading a blank form submission — an accidental blank
+    // field would otherwise silently delete a configured directive.
+    pub fn clear_curated(&mut self, directive: CuratedDirective) {
+        self.remove_directive(directive.spec().keyword);
     }
 }
 
@@ -291,6 +312,83 @@ fn validate_port(value: &str) -> Result<(), ValidationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_directive_removes_the_line_and_preserves_everything_else() {
+        let input = "# rig notes\nCBEACON delay=1 info=\"Test\"\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.remove_directive("CBEACON");
+
+        assert_eq!(doc.get_directive("CBEACON"), None);
+        assert_eq!(doc.serialize(), "# rig notes\n\nADEVICE plughw:0,0\n");
+    }
+
+    #[test]
+    fn remove_directive_is_a_no_op_when_the_keyword_is_absent() {
+        let input = "ADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.remove_directive("CBEACON");
+
+        assert_eq!(doc.serialize(), input);
+    }
+
+    #[test]
+    fn remove_directive_matches_keyword_case_insensitively() {
+        let mut doc = Document::parse("cbeacon delay=1\nADEVICE plughw:0,0\n");
+
+        doc.remove_directive("CBEACON");
+
+        assert_eq!(doc.serialize(), "ADEVICE plughw:0,0\n");
+    }
+
+    #[test]
+    fn remove_directive_removes_only_the_first_matching_line() {
+        // CHANNEL is a repeating selector (see the NOTE above get_curated) —
+        // removing a curated field's line must not sweep up a later,
+        // unrelated repeated block for the same keyword.
+        let mut doc = Document::parse("CHANNEL 0\nMODEM 1200\n\nCHANNEL 1\nMODEM 9600\n");
+
+        doc.remove_directive("CHANNEL");
+
+        assert_eq!(doc.serialize(), "MODEM 1200\n\nCHANNEL 1\nMODEM 9600\n");
+    }
+
+    #[test]
+    fn clear_curated_removes_a_previously_set_directives_line() {
+        let input = "# rig notes\nCBEACON delay=1 info=\"Test\"\n\nADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.clear_curated(CuratedDirective::CBeacon);
+
+        assert_eq!(doc.get_curated(CuratedDirective::CBeacon), None);
+        assert_eq!(doc.serialize(), "# rig notes\n\nADEVICE plughw:0,0\n");
+    }
+
+    #[test]
+    fn clear_curated_is_a_no_op_when_the_directive_was_never_set() {
+        let input = "ADEVICE plughw:0,0\n";
+        let mut doc = Document::parse(input);
+
+        doc.clear_curated(CuratedDirective::CBeacon);
+
+        assert_eq!(doc.serialize(), input);
+    }
+
+    #[test]
+    fn cleared_directive_can_be_set_again_afterward() {
+        let mut doc = Document::parse("CBEACON delay=1 info=\"Test\"\n");
+
+        doc.clear_curated(CuratedDirective::CBeacon);
+        doc.set_curated(CuratedDirective::CBeacon, "delay=2 info=\"New\"")
+            .unwrap();
+
+        assert_eq!(
+            doc.get_curated(CuratedDirective::CBeacon),
+            Some("delay=2 info=\"New\"")
+        );
+    }
 
     #[test]
     fn untouched_content_round_trips_byte_for_byte() {

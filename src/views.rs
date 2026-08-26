@@ -230,6 +230,11 @@ pub struct DirectiveField {
     // string) render as a wrapping textarea instead of a single-line input,
     // so the whole value stays visible rather than scrolling off-screen.
     pub multiline: bool,
+    // False for directives where removing the line has consequences beyond
+    // that directive itself (e.g. CHANNEL scopes the MODEM/PTT lines under
+    // it) — the Clear button is withheld rather than offering an action
+    // that can silently orphan other lines.
+    pub clearable: bool,
     pub value: String,
     pub error: Option<&'static str>,
 }
@@ -266,16 +271,28 @@ fn directive_field_html(f: &DirectiveField) -> String {
             value = html_escape(&f.value)
         )
     };
+    // Only a directive with an existing value can be cleared — a never-set
+    // field has nothing to remove from the Config File.
+    let clear_html = if f.value.is_empty() || !f.clearable {
+        String::new()
+    } else {
+        format!(
+            r#"<button type="submit" formaction="/directives/clear" name="clear_field" value="{name}" class="field-clear">Clear</button>"#,
+            name = f.name
+        )
+    };
     format!(
         r#"<div class="field">
 <label class="field-label" for="{name}">{label}{badge}</label>
 {input}
+{clear}
 {error}
 </div>"#,
         name = f.name,
         label = html_escape(label_text),
         badge = badge_html,
         input = input_html,
+        clear = clear_html,
         error = error_html
     )
 }
@@ -537,9 +554,48 @@ mod tests {
             name,
             group,
             multiline: false,
+            clearable: true,
             value: String::new(),
             error: None,
         }
+    }
+
+    #[test]
+    fn a_field_with_an_existing_value_gets_a_clear_button_targeting_its_own_field() {
+        let mut f = field("APRS beaconing", "cbeacon");
+        f.value = "delay=1 info=\"Test\"".to_string();
+
+        let html = directives_editor(std::slice::from_ref(&f));
+
+        // formaction submits the same form to a separate route, so clearing
+        // is a deliberate action distinct from blanking the field and
+        // clicking Save.
+        assert!(html.contains(
+            r#"<button type="submit" formaction="/directives/clear" name="clear_field" value="cbeacon" class="field-clear">Clear</button>"#
+        ));
+    }
+
+    #[test]
+    fn a_field_with_no_existing_value_has_no_clear_button() {
+        let f = field("APRS beaconing", "cbeacon");
+
+        let html = directives_editor(std::slice::from_ref(&f));
+
+        assert!(!html.contains("Clear"));
+    }
+
+    #[test]
+    fn a_field_marked_not_clearable_has_no_clear_button_even_with_a_value() {
+        // CHANNEL is a repeating scope selector for MODEM/PTT lines beneath
+        // it (see the NOTE on config::Document::get_curated) — clearing it
+        // could silently orphan those scoped lines, so it's excluded.
+        let mut f = field("Channel, modem & PTT", "channel");
+        f.clearable = false;
+        f.value = "0".to_string();
+
+        let html = directives_editor(std::slice::from_ref(&f));
+
+        assert!(!html.contains("Clear"));
     }
 
     #[test]

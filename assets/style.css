@@ -231,6 +231,24 @@ p {
   white-space: nowrap;
 }
 
+/* Muted and self-aligned rather than the default solid submit-button look,
+   so a deliberate clear action doesn't visually compete with Save. The
+   type="submit" qualifier gives this rule higher specificity than the plain
+   button[type="submit"] rule below, so it wins regardless of source order. */
+button[type="submit"].field-clear {
+  align-self: flex-start;
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+  background: var(--surface);
+  color: var(--ink-dim);
+  border: 1px solid var(--line);
+}
+
+button[type="submit"].field-clear:hover {
+  border-color: var(--ink-dim);
+  color: var(--ink);
+}
+
 input[type="text"],
 textarea {
   width: 100%;

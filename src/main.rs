@@ -182,6 +182,10 @@ impl FormFieldSpec {
             name: self.name,
             group: self.group,
             multiline: self.multiline,
+            // CHANNEL scopes the MODEM/PTT lines beneath it (see the NOTE
+            // on Document::get_curated) — excluded from Clear since
+            // removing it can silently orphan those scoped lines.
+            clearable: !matches!(self.directive, config::CuratedDirective::Channel),
             value,
             error,
         }
@@ -309,6 +313,29 @@ async fn save_directives(
     Redirect::to("/directives").into_response()
 }
 
+#[derive(Deserialize)]
+struct ClearDirectiveForm {
+    clear_field: String,
+}
+
+async fn clear_directive(
+    State(ctx): State<AppContext>,
+    Form(form): Form<ClearDirectiveForm>,
+) -> axum::response::Response {
+    let (path, content) = match read_active_config(&ctx) {
+        Ok(pair) => pair,
+        Err(page) => return page.into_response(),
+    };
+
+    if let Some(spec) = CURATED_FIELDS.iter().find(|s| s.name == form.clear_field) {
+        let mut doc = config::Document::parse(&content);
+        doc.clear_curated(spec.directive);
+        write_config(&ctx, &path, doc.serialize());
+    }
+
+    Redirect::to("/directives").into_response()
+}
+
 fn cli_bind_arg(args: &[String]) -> Option<String> {
     args.iter()
         .position(|a| a == "--bind")
@@ -356,6 +383,7 @@ async fn main() {
         )
         .route("/raw", get(edit_raw_config).post(save_raw_config))
         .route("/directives", get(edit_directives).post(save_directives))
+        .route("/directives/clear", axum::routing::post(clear_directive))
         .route("/status", get(status))
         .route("/vendor/htmx/htmx.min.js", get(htmx_js))
         .route("/style.css", get(style_css))
