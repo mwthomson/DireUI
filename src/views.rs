@@ -25,6 +25,7 @@ pub fn page(body: &str, active_config: Option<&Path>) -> String {
 <title>DireUI</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/vendor/htmx/htmx.min.js"></script>
+<script src="/app.js" defer></script>
 </head>
 <body>
 <header class="site-header">
@@ -190,9 +191,26 @@ fn profile_row_html(profile: &state::Profile, is_active: bool, path_html: &str) 
         )
     };
     format!(
-        r#"<li><span class="profile-name">{name}</span><span class="config-path" title="{path_attr}">{path_html}</span>{status}</li>"#,
+        r#"<li>
+<div class="profile-main">
+<div class="profile-name-cell">
+<span class="profile-name" data-name-display>{name}</span>
+<form method="post" action="/profiles/rename" class="profile-rename-form" data-name-edit hidden>
+<input type="hidden" name="path" value="{path}">
+<input type="text" name="name" value="{name}" required>
+<button type="submit">Save</button>
+<button type="button" data-cancel-rename>Cancel</button>
+</form>
+<button type="button" class="icon-button" data-edit-name aria-label="Rename profile">&#9998;</button>
+</div>
+<span class="config-path" title="{path}">{path_html}</span>
+</div>
+<div class="profile-actions">
+{status}
+</div>
+</li>"#,
         name = name,
-        path_attr = path_attr,
+        path = path_attr,
         path_html = path_html,
         status = status_html
     )
@@ -412,6 +430,18 @@ mod tests {
             r##"<button hx-get="/status" hx-target="#server-status" hx-swap="innerHTML">Check server status</button>"##
         ));
         assert!(html.contains(r#"<span id="server-status""#));
+    }
+
+    #[test]
+    fn profiles_page_includes_a_rename_form_for_each_profile() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/aprs.conf"), "APRS".to_string(), false);
+
+        let html = profiles_page(&state, None);
+
+        assert!(html.contains(r#"<form method="post" action="/profiles/rename""#));
+        assert!(html.contains(r#"value="/home/user/aprs.conf""#));
+        assert!(html.contains(r#"value="APRS""#));
     }
 
     #[test]

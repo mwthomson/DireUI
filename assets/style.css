@@ -164,6 +164,47 @@ p {
   color: var(--ink-dim);
 }
 
+.profile-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.profile-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.profile-rename-form {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.profile-rename-form input[type="text"] {
+  width: auto;
+  flex: initial;
+}
+
+.profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.icon-button {
+  background: transparent;
+  border: 1px solid transparent;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.3rem;
+}
+
+.icon-button:hover {
+  border-color: var(--line);
+}
+
 .pill {
   font-family: var(--font-mono);
   font-size: 0.7rem;

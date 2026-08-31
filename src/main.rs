@@ -24,6 +24,7 @@ use state::AppState;
 use store::StateStore;
 
 const HTMX_JS: &[u8] = include_bytes!("../assets/vendor/htmx/htmx.min.js");
+const APP_JS: &[u8] = include_bytes!("../assets/app.js");
 const STYLE_CSS: &[u8] = include_bytes!("../assets/style.css");
 
 #[derive(Clone)]
@@ -65,6 +66,10 @@ async fn htmx_js() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "application/javascript")], HTMX_JS)
 }
 
+async fn app_js() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "application/javascript")], APP_JS)
+}
+
 async fn style_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css")], STYLE_CSS)
 }
@@ -102,6 +107,22 @@ async fn activate_profile(State(ctx): State<AppContext>, Form(form): Form<PathFo
 
     ctx.mutate_and_save(|state| {
         if let Err(err) = state.activate_profile(&path) {
+            eprintln!("error: {err}");
+        }
+    });
+    Redirect::to("/")
+}
+
+#[derive(Deserialize)]
+struct RenameProfileForm {
+    path: String,
+    name: String,
+}
+
+async fn rename_profile(State(ctx): State<AppContext>, Form(form): Form<RenameProfileForm>) -> Redirect {
+    let path = PathBuf::from(form.path);
+    ctx.mutate_and_save(|state| {
+        if let Err(err) = state.rename_profile(&path, form.name) {
             eprintln!("error: {err}");
         }
     });
@@ -427,6 +448,7 @@ async fn main() {
         .route("/", get(index))
         .route("/profiles", axum::routing::post(add_profile))
         .route("/profiles/activate", axum::routing::post(activate_profile))
+        .route("/profiles/rename", axum::routing::post(rename_profile))
         .route(
             "/backup-preference",
             axum::routing::post(set_backup_preference),
@@ -436,6 +458,7 @@ async fn main() {
         .route("/directives/clear", axum::routing::post(clear_directive))
         .route("/status", get(status))
         .route("/vendor/htmx/htmx.min.js", get(htmx_js))
+        .route("/app.js", get(app_js))
         .route("/style.css", get(style_css))
         .with_state(ctx);
 
