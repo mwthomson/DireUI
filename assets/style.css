@@ -182,6 +182,14 @@ p {
   gap: 0.4rem;
 }
 
+/* [hidden] and .profile-rename-form{display:flex} have equal specificity, so
+   without this the class rule (later in the cascade) would win and the form
+   would stay visible even while hidden — this attribute-plus-class selector
+   is more specific and restores the native hidden behavior. */
+.profile-rename-form[hidden] {
+  display: none;
+}
+
 .profile-rename-form input[type="text"] {
   width: auto;
   flex: initial;
