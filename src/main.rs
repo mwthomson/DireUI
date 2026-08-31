@@ -320,8 +320,17 @@ async fn save_directives(
     // invalid PTT value can't leave a config with only some fields updated.
     let mut fields = Vec::new();
     let mut any_error = false;
+    let mut any_change = false;
     for spec in CURATED_FIELDS {
         let value = form.get(spec.name).cloned().unwrap_or_default();
+        // Compare against original_doc's value (unmutated), not doc's —
+        // set_curated below unconditionally rewrites the line's raw text
+        // to canonical spacing even when the value itself is unchanged,
+        // which would otherwise make a doc == original_doc check report
+        // a false "changed" on formatting alone.
+        if value != original_doc.get_curated(spec.directive).unwrap_or("") {
+            any_change = true;
+        }
         match doc.set_curated(spec.directive, &value) {
             Ok(()) => fields.push(spec.to_directive_field(value, None)),
             Err(err) => {
@@ -339,7 +348,7 @@ async fn save_directives(
         .into_response();
     }
 
-    if doc == original_doc {
+    if !any_change {
         return Redirect::to(&format!("/?{}", flash::Flash::NoChange.to_query_string())).into_response();
     }
 
@@ -501,5 +510,65 @@ mod tests {
 
         // The file's original CRLF line endings must be left untouched.
         assert_eq!(std::fs::read_to_string(&path).unwrap(), crlf_content);
+    }
+
+    // Regression test: a curated directive line with non-canonical spacing
+    // (plausible in a hand-typed direwolf.conf, which ADR-0001 exists to
+    // protect) must not be mistaken for a real change. set_curated always
+    // rewrites the matched line's raw text to canonical single-space form,
+    // even when the submitted value is identical to what's already there —
+    // so save_directives must compare submitted values against
+    // original_doc's parsed values, not rely on Document equality, or a
+    // no-op save on such a file would reformat the line, report "changes
+    // saved", and actually write the file.
+    #[tokio::test]
+    async fn save_directives_detects_no_change_despite_non_canonical_spacing_on_disk() {
+        let path = temp_config_path("directives-no-change-spacing");
+        // CHANNEL has two spaces before its value instead of the canonical
+        // single space that set_directive always writes.
+        let content = concat!(
+            "ADEVICE plughw:1,0\n",
+            "CHANNEL  0\n",
+            "MODEM 1200\n",
+            "PTT COM1\n",
+            "AGWPORT 8000\n",
+            "KISSPORT 8001\n",
+            "PBEACON delay=1 info=\"test\"\n",
+            "CBEACON delay=1 info=\"test\"\n",
+            "DIGIPEAT 0 1 WIDE1-1 TRACE\n",
+        );
+        std::fs::write(&path, content).unwrap();
+        let ctx = test_ctx(path.clone());
+
+        // Submit the exact same values already on disk for every field —
+        // including "0" for channel, which matches CHANNEL's current value
+        // even though the on-disk line's spacing is non-canonical.
+        let mut form = std::collections::HashMap::new();
+        form.insert("adevice".to_string(), "plughw:1,0".to_string());
+        form.insert("channel".to_string(), "0".to_string());
+        form.insert("modem".to_string(), "1200".to_string());
+        form.insert("ptt".to_string(), "COM1".to_string());
+        form.insert("agwport".to_string(), "8000".to_string());
+        form.insert("kissport".to_string(), "8001".to_string());
+        form.insert("pbeacon".to_string(), "delay=1 info=\"test\"".to_string());
+        form.insert("cbeacon".to_string(), "delay=1 info=\"test\"".to_string());
+        form.insert("digipeat".to_string(), "0 1 WIDE1-1 TRACE".to_string());
+
+        let response = save_directives(State(ctx), Form(form)).await;
+
+        let location = response
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            location.contains("flash=nochange"),
+            "expected a no-change flash redirect, got {location:?}"
+        );
+
+        // The file's non-canonical spacing must be left untouched, not
+        // reformatted to canonical spacing.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
     }
 }
