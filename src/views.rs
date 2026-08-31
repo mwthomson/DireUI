@@ -191,7 +191,7 @@ pub fn config_manager(state: &AppState) -> String {
         .collect();
 
     format!(
-        r##"<h1>Configs</h1>
+        r##"<h1>Configurations</h1>
 <ul class="config-list">{}</ul>
 {}
 {}
