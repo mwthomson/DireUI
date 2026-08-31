@@ -129,6 +129,25 @@ async fn rename_profile(State(ctx): State<AppContext>, Form(form): Form<RenamePr
     Redirect::to("/")
 }
 
+async fn remove_profile(State(ctx): State<AppContext>, Form(form): Form<PathForm>) -> Redirect {
+    let path = PathBuf::from(form.path);
+    ctx.mutate_and_save(|state| state.remove_profile(&path));
+    Redirect::to(&format!("/?{}", flash::Flash::Removed.to_query_string()))
+}
+
+async fn delete_profile(State(ctx): State<AppContext>, Form(form): Form<PathForm>) -> Redirect {
+    let path = PathBuf::from(form.path);
+    if let Err(err) = std::fs::remove_file(&path) {
+        eprintln!("error: failed to delete {}: {err}", path.display());
+        return Redirect::to(&format!(
+            "/?{}",
+            flash::Flash::DeleteFailed(err.to_string()).to_query_string()
+        ));
+    }
+    ctx.mutate_and_save(|state| state.remove_profile(&path));
+    Redirect::to(&format!("/?{}", flash::Flash::Deleted.to_query_string()))
+}
+
 #[derive(Deserialize)]
 struct BackupPreferenceForm {
     enabled: bool,
@@ -449,6 +468,8 @@ async fn main() {
         .route("/profiles", axum::routing::post(add_profile))
         .route("/profiles/activate", axum::routing::post(activate_profile))
         .route("/profiles/rename", axum::routing::post(rename_profile))
+        .route("/profiles/remove", axum::routing::post(remove_profile))
+        .route("/profiles/delete", axum::routing::post(delete_profile))
         .route(
             "/backup-preference",
             axum::routing::post(set_backup_preference),

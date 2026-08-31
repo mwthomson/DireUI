@@ -207,6 +207,7 @@ fn profile_row_html(profile: &state::Profile, is_active: bool, path_html: &str) 
 </div>
 <div class="profile-actions">
 {status}
+<button type="button" class="icon-button" data-delete-path="{path}" data-delete-name="{name}" aria-label="Delete profile">&#128465;</button>
 </div>
 </li>"#,
         name = name,
@@ -214,6 +215,33 @@ fn profile_row_html(profile: &state::Profile, is_active: bool, path_html: &str) 
         path_html = path_html,
         status = status_html
     )
+}
+
+fn delete_dialog() -> String {
+    r#"<dialog id="delete-dialog" class="delete-dialog">
+<div id="delete-step-1">
+<p>Remove <strong id="delete-dialog-name"></strong> from DireUI?</p>
+<div class="dialog-actions">
+<button type="button" onclick="document.getElementById('delete-dialog').close()">Cancel</button>
+<form method="post" action="/profiles/remove">
+<input type="hidden" name="path" id="delete-dialog-remove-path">
+<button type="submit">Remove</button>
+</form>
+<button type="button" id="delete-dialog-show-step-2">Delete file too&hellip;</button>
+</div>
+</div>
+<div id="delete-step-2" hidden>
+<p class="error-text">This permanently deletes the Config File from disk. This cannot be undone. If this is the active Profile, another Profile will automatically become active.</p>
+<div class="dialog-actions">
+<button type="button" id="delete-dialog-show-step-1">Back</button>
+<form method="post" action="/profiles/delete">
+<input type="hidden" name="path" id="delete-dialog-delete-path">
+<button type="submit" class="button-danger">Yes, delete the file</button>
+</form>
+</div>
+</div>
+</dialog>"#
+        .to_string()
 }
 
 pub fn profiles_page(state: &AppState, flash: Option<&crate::flash::Flash>) -> String {
@@ -247,11 +275,13 @@ pub fn profiles_page(state: &AppState, flash: Option<&crate::flash::Flash>) -> S
 <button hx-get="/status" hx-target="#server-status" hx-swap="innerHTML">Check server status</button>
 <span id="server-status" aria-live="polite"></span>
 </div>
-</nav>"##,
+</nav>
+{dialog}"##,
         flash = flash_html,
         items = list_items,
         add_form = add_profile_form("", "/home/user/aprs.conf", "e.g. APRS", "Add profile", !state.profiles.is_empty()),
         backup_toggle = backup_preference_toggle(state.backup_preference),
+        dialog = delete_dialog(),
     )
 }
 
@@ -416,6 +446,28 @@ mod tests {
         let html = status_indicator();
 
         assert!(html.contains("status-pill"));
+    }
+
+    #[test]
+    fn profiles_page_includes_a_delete_button_for_each_profile() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/aprs.conf"), "APRS".to_string(), false);
+
+        let html = profiles_page(&state, None);
+
+        assert!(html.contains(r#"data-delete-path="/home/user/aprs.conf""#));
+        assert!(html.contains(r#"data-delete-name="APRS""#));
+    }
+
+    #[test]
+    fn profiles_page_includes_the_shared_delete_dialog_with_both_actions() {
+        let state = AppState::default();
+
+        let html = profiles_page(&state, None);
+
+        assert!(html.contains(r#"<dialog id="delete-dialog""#));
+        assert!(html.contains(r#"action="/profiles/remove""#));
+        assert!(html.contains(r#"action="/profiles/delete""#));
     }
 
     #[test]

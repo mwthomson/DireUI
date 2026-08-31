@@ -443,3 +443,28 @@ a:hover {
     transition: none !important;
   }
 }
+
+dialog.delete-dialog {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  max-width: 420px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+dialog.delete-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.button-danger {
+  background: var(--alert);
+  color: var(--signal-ink);
+  border-color: var(--alert);
+}
