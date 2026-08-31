@@ -52,7 +52,7 @@ async fn index(State(ctx): State<AppContext>) -> Html<String> {
             .and_then(|home| state::suggest_default_config_path(home, |p| p.exists()));
         views::first_run(suggestion.as_deref())
     } else {
-        views::config_manager(&state)
+        views::profiles_page(&state, None)
     };
     Html(views::page(&body, state.active_config.as_deref()))
 }
@@ -74,22 +74,30 @@ struct PathForm {
     path: String,
 }
 
-async fn add_config(State(ctx): State<AppContext>, Form(form): Form<PathForm>) -> Redirect {
+#[derive(Deserialize)]
+struct AddProfileForm {
+    path: String,
+    name: String,
+    #[serde(default)]
+    make_active: bool,
+}
+
+async fn add_profile(State(ctx): State<AppContext>, Form(form): Form<AddProfileForm>) -> Redirect {
     let path = PathBuf::from(form.path);
     if let Err(err) = store::ensure_config_file_exists(&path) {
         eprintln!("error: failed to create {}: {err}", path.display());
         return Redirect::to("/");
     }
 
-    ctx.mutate_and_save(|state| state.add_known_config(path));
+    ctx.mutate_and_save(|state| state.add_profile(path, form.name, form.make_active));
     Redirect::to("/")
 }
 
-async fn set_active_config(State(ctx): State<AppContext>, Form(form): Form<PathForm>) -> Redirect {
+async fn activate_profile(State(ctx): State<AppContext>, Form(form): Form<PathForm>) -> Redirect {
     let path = PathBuf::from(form.path);
 
     ctx.mutate_and_save(|state| {
-        if let Err(err) = state.set_active_config(&path) {
+        if let Err(err) = state.activate_profile(&path) {
             eprintln!("error: {err}");
         }
     });
@@ -376,8 +384,8 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index))
-        .route("/configs", axum::routing::post(add_config))
-        .route("/configs/active", axum::routing::post(set_active_config))
+        .route("/profiles", axum::routing::post(add_profile))
+        .route("/profiles/activate", axum::routing::post(activate_profile))
         .route(
             "/backup-preference",
             axum::routing::post(set_backup_preference),

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::state::AppState;
+use crate::state::{self, AppState};
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -31,7 +31,7 @@ pub fn page(body: &str, active_config: Option<&Path>) -> String {
 <p class="wordmark">DireUI</p>
 <nav class="site-nav">
 <span class="site-active-config">Active config: <span class="config-path">{active}</span></span>
-<a href="/">Configs</a>
+<a href="/">Profiles</a>
 </nav>
 </header>
 <main class="page">
@@ -45,15 +45,30 @@ pub fn page(body: &str, active_config: Option<&Path>) -> String {
     )
 }
 
-fn add_config_form(value: &str, placeholder: &str, label: &str) -> String {
+fn add_profile_form(
+    path_value: &str,
+    path_placeholder: &str,
+    name_placeholder: &str,
+    submit_label: &str,
+    show_make_active: bool,
+) -> String {
+    let make_active_html = if show_make_active {
+        r#"<label class="checkbox-label"><input type="checkbox" name="make_active" value="true"> Make this the active profile</label>"#
+    } else {
+        ""
+    };
     format!(
-        r#"<form class="form-inline" method="post" action="/configs">
-<input type="text" name="path" value="{}" placeholder="{}">
-<button type="submit">{}</button>
+        r#"<form class="form-inline" method="post" action="/profiles">
+<input type="text" name="name" value="" placeholder="{name_placeholder}" required>
+<input type="text" name="path" value="{path_value}" placeholder="{path_placeholder}">
+{make_active}
+<button type="submit">{label}</button>
 </form>"#,
-        html_escape(value),
-        html_escape(placeholder),
-        html_escape(label)
+        name_placeholder = html_escape(name_placeholder),
+        path_value = html_escape(path_value),
+        path_placeholder = html_escape(path_placeholder),
+        make_active = make_active_html,
+        label = html_escape(submit_label)
     )
 }
 
@@ -65,7 +80,7 @@ pub fn first_run(suggested_path: Option<&Path>) -> String {
         r#"<h1>Welcome to DireUI</h1>
 <p>Choose the Direwolf config file DireUI should manage.</p>
 {}"#,
-        add_config_form(&suggestion, "/home/user/.direwolf.conf", "Use this config")
+        add_profile_form(&suggestion, "/home/user/.direwolf.conf", "e.g. APRS", "Use this config", false)
     )
 }
 
@@ -163,38 +178,50 @@ pub fn status_indicator() -> String {
     r#"<span class="pill status-pill status-ok">Server is running</span>"#.to_string()
 }
 
-pub fn config_manager(state: &AppState) -> String {
-    let displays: Vec<String> = state
-        .known_configs
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect();
+fn profile_row_html(profile: &state::Profile, is_active: bool, path_html: &str) -> String {
+    let name = html_escape(&profile.name);
+    let path_attr = html_escape(&profile.path.display().to_string());
+    let status_html = if is_active {
+        r#"<span class="pill profile-badge">active</span>"#.to_string()
+    } else {
+        format!(
+            r#"<form method="post" action="/profiles/activate"><input type="hidden" name="path" value="{path}"><button type="submit">Switch to this</button></form>"#,
+            path = path_attr
+        )
+    };
+    format!(
+        r#"<li><span class="profile-name">{name}</span><span class="config-path" title="{path_attr}">{path_html}</span>{status}</li>"#,
+        name = name,
+        path_attr = path_attr,
+        path_html = path_html,
+        status = status_html
+    )
+}
+
+pub fn profiles_page(state: &AppState, flash: Option<&crate::flash::Flash>) -> String {
+    let ordered = state.ordered_profiles();
+    let displays: Vec<String> = ordered.iter().map(|p| p.path.display().to_string()).collect();
     let highlighted = highlight_differing_segments(&displays);
 
-    let list_items: String = state
-        .known_configs
+    let list_items: String = ordered
         .iter()
-        .zip(displays.iter())
         .zip(highlighted.iter())
-        .map(|((p, display), path_html)| {
-            let title = html_escape(display);
-            if state.active_config.as_deref() == Some(p.as_path()) {
-                format!(
-                    r#"<li><span class="config-path" title="{title}">{path_html}</span><span class="pill config-badge">active</span></li>"#
-                )
-            } else {
-                format!(
-                    r#"<li><span class="config-path" title="{title}">{path_html}</span><form method="post" action="/configs/active"><input type="hidden" name="path" value="{title}"><button type="submit">Switch to this</button></form></li>"#
-                )
-            }
+        .map(|(profile, path_html)| {
+            let is_active = state.active_config.as_deref() == Some(profile.path.as_path());
+            profile_row_html(profile, is_active, path_html)
         })
         .collect();
 
+    let flash_html = flash
+        .map(|f| format!(r#"<p class="flash" role="status">{}</p>"#, html_escape(&f.message())))
+        .unwrap_or_default();
+
     format!(
-        r##"<h1>Configurations</h1>
-<ul class="config-list">{}</ul>
-{}
-{}
+        r##"<h1>Profiles</h1>
+{flash}
+<ul class="profile-list">{items}</ul>
+{add_form}
+{backup_toggle}
 <nav class="actions">
 <a href="/directives">Edit directives</a>
 <a href="/raw">Edit raw config</a>
@@ -203,9 +230,10 @@ pub fn config_manager(state: &AppState) -> String {
 <span id="server-status" aria-live="polite"></span>
 </div>
 </nav>"##,
-        list_items,
-        add_config_form("", "/home/user/aprs.conf", "Add config"),
-        backup_preference_toggle(state.backup_preference)
+        flash = flash_html,
+        items = list_items,
+        add_form = add_profile_form("", "/home/user/aprs.conf", "e.g. APRS", "Add profile", !state.profiles.is_empty()),
+        backup_toggle = backup_preference_toggle(state.backup_preference),
     )
 }
 
@@ -345,6 +373,7 @@ pub fn error(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::Profile;
     use std::path::PathBuf;
 
     #[test]
@@ -355,10 +384,10 @@ mod tests {
     }
 
     #[test]
-    fn config_manager_status_button_targets_a_separate_indicator_not_itself() {
+    fn profiles_page_status_button_targets_a_separate_indicator_not_itself() {
         let state = AppState::default();
 
-        let html = config_manager(&state);
+        let html = profiles_page(&state, None);
 
         // The button must survive the swap so it can be clicked again — it
         // targets a sibling element rather than replacing itself.
@@ -386,10 +415,10 @@ mod tests {
     }
 
     #[test]
-    fn page_always_links_back_to_the_config_manager() {
+    fn page_always_links_back_to_the_profiles_page() {
         let html = page("<p>body</p>", None);
 
-        assert!(html.contains(r#"<a href="/">Configs</a>"#));
+        assert!(html.contains(r#"<a href="/">Profiles</a>"#));
     }
 
     #[test]
@@ -502,48 +531,68 @@ mod tests {
     }
 
     #[test]
-    fn config_manager_marks_the_differing_segment_between_two_known_configs() {
+    fn profiles_page_marks_the_differing_segment_between_two_profiles() {
         let state = AppState {
-            known_configs: vec![
-                PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
-                PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+            profiles: vec![
+                Profile {
+                    path: PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
+                    name: "APRS".to_string(),
+                    last_activated_at: 0,
+                },
+                Profile {
+                    path: PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+                    name: "Packet".to_string(),
+                    last_activated_at: 0,
+                },
             ],
             active_config: Some(PathBuf::from("/home/pi/aprs-config/direwolf.conf")),
             backup_preference: false,
         };
 
-        let html = config_manager(&state);
+        let html = profiles_page(&state, None);
 
         assert!(html.contains(r#"<span class="config-path-diff">aprs-config</span>"#));
         assert!(html.contains(r#"<span class="config-path-diff">packet-config</span>"#));
     }
 
     #[test]
-    fn config_manager_still_marks_the_active_config_when_paths_are_similar() {
+    fn profiles_page_still_marks_the_active_config_when_paths_are_similar() {
         let state = AppState {
-            known_configs: vec![
-                PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
-                PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+            profiles: vec![
+                Profile {
+                    path: PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
+                    name: "APRS".to_string(),
+                    last_activated_at: 0,
+                },
+                Profile {
+                    path: PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+                    name: "Packet".to_string(),
+                    last_activated_at: 0,
+                },
             ],
             active_config: Some(PathBuf::from("/home/pi/packet-config/direwolf.conf")),
             backup_preference: false,
         };
 
-        let html = config_manager(&state);
+        let html = profiles_page(&state, None);
 
-        assert!(html.contains(r#"<span class="pill config-badge">active</span>"#));
+        assert!(html.contains(r#"<span class="pill profile-badge">active</span>"#));
         assert!(html.contains(r#"<span class="config-path-diff">packet-config</span>"#));
     }
 
     #[test]
-    fn config_manager_shows_the_full_path_as_a_title_attribute() {
+    fn profiles_page_shows_the_full_path_as_a_title_attribute() {
         let state = AppState {
-            known_configs: vec![PathBuf::from("/home/pi/aprs-config/direwolf.conf")],
+            profiles: vec![Profile {
+                path: PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
+                name: "APRS".to_string(),
+                last_activated_at: 0,
+            }],
             active_config: Some(PathBuf::from("/home/pi/aprs-config/direwolf.conf")),
             backup_preference: false,
         };
 
-        let html = config_manager(&state);
+        let html = profiles_page(&state, None);
 
         assert!(html.contains(r#"title="/home/pi/aprs-config/direwolf.conf""#));
     }

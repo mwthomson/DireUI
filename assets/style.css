@@ -116,7 +116,7 @@ p {
   color: var(--ink-dim);
 }
 
-.config-list {
+.profile-list {
   list-style: none;
   margin: 0 0 1.5rem;
   padding: 0;
@@ -125,7 +125,7 @@ p {
   border-radius: var(--radius);
 }
 
-.config-list li {
+.profile-list li {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -134,7 +134,7 @@ p {
   border-bottom: 1px solid var(--line);
 }
 
-.config-list li:last-child {
+.profile-list li:last-child {
   border-bottom: none;
 }
 
@@ -152,6 +152,18 @@ p {
   text-underline-offset: 2px;
 }
 
+.profile-name {
+  font-weight: 600;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+
 .pill {
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -162,7 +174,7 @@ p {
   white-space: nowrap;
 }
 
-.config-badge {
+.profile-badge {
   color: var(--signal);
   border: 1px solid var(--signal);
 }
