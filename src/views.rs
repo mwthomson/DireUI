@@ -336,7 +336,7 @@ fn directive_field_html(f: &DirectiveField) -> String {
 // Fields already arrive ordered by directive area (see CURATED_FIELDS), so
 // grouping is a matter of chunking on consecutive equal `group` values
 // rather than sorting/bucketing by group name.
-pub fn directives_editor(fields: &[DirectiveField]) -> String {
+pub fn directives_editor(fields: &[DirectiveField], save_error: Option<&str>) -> String {
     let groups_html: String = fields
         .chunk_by(|a, b| a.group == b.group)
         .map(|group_fields| {
@@ -354,13 +354,22 @@ pub fn directives_editor(fields: &[DirectiveField]) -> String {
         })
         .collect();
 
+    let error_html = save_error
+        .map(|reason| format!(r#"<p class="error-text">save failed: {}</p>"#, html_escape(reason)))
+        .unwrap_or_default();
+
     format!(
         r#"<h1>Edit directives</h1>
+{error}
 <form method="post" action="/directives">
 {}
+<div class="button-row">
 <button type="submit">Save</button>
+<a class="button" href="/">Cancel</a>
+</div>
 </form>"#,
-        groups_html
+        groups_html,
+        error = error_html
     )
 }
 
@@ -622,7 +631,7 @@ mod tests {
         let mut f = field("APRS beaconing", "cbeacon");
         f.value = "delay=1 info=\"Test\"".to_string();
 
-        let html = directives_editor(std::slice::from_ref(&f));
+        let html = directives_editor(std::slice::from_ref(&f), None);
 
         // formaction submits the same form to a separate route, so clearing
         // is a deliberate action distinct from blanking the field and
@@ -636,7 +645,7 @@ mod tests {
     fn a_field_with_no_existing_value_has_no_clear_button() {
         let f = field("APRS beaconing", "cbeacon");
 
-        let html = directives_editor(std::slice::from_ref(&f));
+        let html = directives_editor(std::slice::from_ref(&f), None);
 
         assert!(!html.contains("Clear"));
     }
@@ -650,7 +659,7 @@ mod tests {
         f.clearable = false;
         f.value = "0".to_string();
 
-        let html = directives_editor(std::slice::from_ref(&f));
+        let html = directives_editor(std::slice::from_ref(&f), None);
 
         assert!(!html.contains("Clear"));
     }
@@ -661,7 +670,7 @@ mod tests {
         f.multiline = true;
         f.value = "delay=1 every=30 lat=42^37.14N long=071^20.83W".to_string();
 
-        let html = directives_editor(std::slice::from_ref(&f));
+        let html = directives_editor(std::slice::from_ref(&f), None);
 
         assert!(html.contains(r#"<textarea class="field-textarea" id="pbeacon" name="pbeacon" rows="2">delay=1 every=30 lat=42^37.14N long=071^20.83W</textarea>"#));
         assert!(!html.contains(r#"<input type="text" id="pbeacon""#));
@@ -676,7 +685,7 @@ mod tests {
             field("Channel, modem & PTT", "ptt"),
         ];
 
-        let html = directives_editor(&fields);
+        let html = directives_editor(&fields, None);
 
         let audio_pos = html.find("Audio device").unwrap();
         let channel_pos = html.find("Channel, modem &amp; PTT").unwrap();
@@ -689,7 +698,7 @@ mod tests {
     fn directives_editor_places_each_field_within_its_group_section() {
         let fields = [field("Audio device", "adevice"), field("Network ports", "agwport")];
 
-        let html = directives_editor(&fields);
+        let html = directives_editor(&fields, None);
 
         let audio_heading = html.find("Audio device").unwrap();
         let adevice_field = html.find(r#"id="adevice""#).unwrap();
@@ -699,6 +708,33 @@ mod tests {
         assert!(audio_heading < adevice_field);
         assert!(adevice_field < network_heading);
         assert!(network_heading < agwport_field);
+    }
+
+    #[test]
+    fn directives_editor_has_no_top_level_error_by_default() {
+        let f = field("Audio device", "adevice");
+
+        let html = directives_editor(std::slice::from_ref(&f), None);
+
+        assert!(!html.contains("save failed"));
+    }
+
+    #[test]
+    fn directives_editor_shows_a_top_level_save_failed_message_when_given_one() {
+        let f = field("Audio device", "adevice");
+
+        let html = directives_editor(std::slice::from_ref(&f), Some("disk full"));
+
+        assert!(html.contains("save failed: disk full"));
+    }
+
+    #[test]
+    fn directives_editor_has_a_cancel_link_back_to_profiles() {
+        let f = field("Audio device", "adevice");
+
+        let html = directives_editor(std::slice::from_ref(&f), None);
+
+        assert!(html.contains(r#"<a class="button" href="/">Cancel</a>"#));
     }
 
     #[test]

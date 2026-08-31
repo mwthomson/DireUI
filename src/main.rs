@@ -299,7 +299,7 @@ async fn edit_directives(State(ctx): State<AppContext>) -> Html<String> {
                     spec.to_directive_field(value, None)
                 })
                 .collect();
-            Html(views::page(&views::directives_editor(&fields), Some(&path)))
+            Html(views::page(&views::directives_editor(&fields, None), Some(&path)))
         }
         Err(page) => page,
     }
@@ -313,7 +313,8 @@ async fn save_directives(
         Ok(pair) => pair,
         Err(page) => return page.into_response(),
     };
-    let mut doc = config::Document::parse(&content);
+    let original_doc = config::Document::parse(&content);
+    let mut doc = original_doc.clone();
 
     // All-or-nothing: validate every field before writing anything, so an
     // invalid PTT value can't leave a config with only some fields updated.
@@ -331,11 +332,23 @@ async fn save_directives(
     }
 
     if any_error {
-        return Html(views::page(&views::directives_editor(&fields), Some(&path))).into_response();
+        return Html(views::page(
+            &views::directives_editor(&fields, Some("please correct the highlighted fields below")),
+            Some(&path),
+        ))
+        .into_response();
     }
 
-    write_config(&ctx, &path, doc.serialize());
-    Redirect::to("/directives").into_response()
+    if doc == original_doc {
+        return Redirect::to(&format!("/?{}", flash::Flash::NoChange.to_query_string())).into_response();
+    }
+
+    match write_config(&ctx, &path, doc.serialize()) {
+        Ok(()) => Redirect::to(&format!("/?{}", flash::Flash::Saved.to_query_string())).into_response(),
+        Err(err) => {
+            Html(views::page(&views::directives_editor(&fields, Some(&err)), Some(&path))).into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]
