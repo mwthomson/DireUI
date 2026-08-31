@@ -10,6 +10,22 @@ pub fn suggest_default_config_path(
     exists(&candidate).then_some(candidate)
 }
 
+// Profile names are required at creation (see plan). The HTML `required`
+// attribute enforces this in the normal UI flow, but a raw POST (curl, JS
+// disabled, a malformed request) can bypass it — this is the server-side
+// fallback: an empty/whitespace-only name falls back to the Config File's
+// basename rather than leaving the Profile with a blank name.
+fn normalize_profile_name(name: &str, path: &Path) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        path.file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled Profile".to_string())
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn current_timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -47,6 +63,7 @@ impl AppState {
             return;
         }
         let should_activate = make_active || self.profiles.is_empty();
+        let name = normalize_profile_name(&name, &path);
         self.profiles.push(Profile {
             path: path.clone(),
             name,
@@ -74,7 +91,7 @@ impl AppState {
             .iter_mut()
             .find(|p| p.path == path)
             .ok_or_else(|| format!("{} is not a known profile", path.display()))?;
-        profile.name = name;
+        profile.name = normalize_profile_name(&name, path);
         Ok(())
     }
 
@@ -335,6 +352,66 @@ mod tests {
             ordered.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
             vec!["A", "B", "C"]
         );
+    }
+
+    #[test]
+    fn add_profile_with_an_empty_name_falls_back_to_the_path_filename() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/.direwolf.conf"), "".to_string(), false);
+
+        assert_eq!(state.profiles[0].name, ".direwolf.conf");
+    }
+
+    #[test]
+    fn add_profile_with_a_whitespace_only_name_falls_back_to_the_path_filename() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/aprs.conf"), "   ".to_string(), false);
+
+        assert_eq!(state.profiles[0].name, "aprs.conf");
+    }
+
+    #[test]
+    fn add_profile_trims_meaningful_leading_and_trailing_whitespace_from_a_name() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/aprs.conf"), "  APRS  ".to_string(), false);
+
+        assert_eq!(state.profiles[0].name, "APRS");
+    }
+
+    #[test]
+    fn rename_profile_with_an_empty_name_falls_back_to_the_path_filename() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/.direwolf.conf"), "Main".to_string(), false);
+
+        state
+            .rename_profile(&PathBuf::from("/home/user/.direwolf.conf"), "".to_string())
+            .unwrap();
+
+        assert_eq!(state.profiles[0].name, ".direwolf.conf");
+    }
+
+    #[test]
+    fn rename_profile_with_a_whitespace_only_name_falls_back_to_the_path_filename() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/aprs.conf"), "Main".to_string(), false);
+
+        state
+            .rename_profile(&PathBuf::from("/home/user/aprs.conf"), "   ".to_string())
+            .unwrap();
+
+        assert_eq!(state.profiles[0].name, "aprs.conf");
+    }
+
+    #[test]
+    fn rename_profile_trims_meaningful_leading_and_trailing_whitespace_from_a_name() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/aprs.conf"), "Main".to_string(), false);
+
+        state
+            .rename_profile(&PathBuf::from("/home/user/aprs.conf"), "  Packet  ".to_string())
+            .unwrap();
+
+        assert_eq!(state.profiles[0].name, "Packet");
     }
 
     #[test]

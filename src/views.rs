@@ -11,7 +11,7 @@ fn html_escape(s: &str) -> String {
 
 // Present on every page so a config being edited elsewhere (raw-text editor,
 // Curated Directive form) never loses sight of which Config File it's
-// editing, and always has a consistent way back to the config manager.
+// editing, and always has a consistent way back to the Profiles page.
 pub fn page(body: &str, active_config: Option<&Path>) -> String {
     let active = active_config
         .map(|p| p.display().to_string())
@@ -73,15 +73,23 @@ fn add_profile_form(
     )
 }
 
-pub fn first_run(suggested_path: Option<&Path>) -> String {
+fn flash_banner_html(flash: Option<&crate::flash::Flash>) -> String {
+    flash
+        .map(|f| format!(r#"<p class="flash" role="status">{}</p>"#, html_escape(&f.message())))
+        .unwrap_or_default()
+}
+
+pub fn first_run(suggested_path: Option<&Path>, flash: Option<&crate::flash::Flash>) -> String {
     let suggestion = suggested_path
         .map(|p| p.display().to_string())
         .unwrap_or_default();
     format!(
         r#"<h1>Welcome to DireUI</h1>
+{flash}
 <p>Choose the Direwolf config file DireUI should manage.</p>
-{}"#,
-        add_profile_form(&suggestion, "/home/user/.direwolf.conf", "e.g. APRS", "Use this config", false)
+{form}"#,
+        flash = flash_banner_html(flash),
+        form = add_profile_form(&suggestion, "/home/user/.direwolf.conf", "e.g. APRS", "Use this config", false)
     )
 }
 
@@ -132,7 +140,7 @@ fn common_segment_range(segments: &[Vec<&str>]) -> (usize, usize) {
     (prefix_len, suffix_len)
 }
 
-// With more than one saved config path, long, mostly-identical paths (e.g.
+// With more than one Profile path, long, mostly-identical paths (e.g.
 // two entries differing only in one directory name) are hard to tell apart
 // at a glance. Wraps the segment(s) that actually differ across `paths` in a
 // `config-path-diff` span so the difference stands out without reading the
@@ -207,7 +215,7 @@ fn profile_row_html(profile: &state::Profile, is_active: bool, path_html: &str) 
 </div>
 <div class="profile-actions">
 {status}
-<button type="button" class="icon-button" data-delete-path="{path}" data-delete-name="{name}" aria-label="Delete profile">&#128465;</button>
+<button type="button" class="icon-button" data-delete-path="{path}" data-delete-name="{name}" aria-label="Remove or delete profile">&#128465;</button>
 </div>
 </li>"#,
         name = name,
@@ -258,9 +266,7 @@ pub fn profiles_page(state: &AppState, flash: Option<&crate::flash::Flash>) -> S
         })
         .collect();
 
-    let flash_html = flash
-        .map(|f| format!(r#"<p class="flash" role="status">{}</p>"#, html_escape(&f.message())))
-        .unwrap_or_default();
+    let flash_html = flash_banner_html(flash);
 
     format!(
         r##"<h1>Profiles</h1>
@@ -423,7 +429,7 @@ pub fn directives_editor(fields: &[DirectiveField], save_error: Option<&str>) ->
 
 pub fn no_active_config() -> String {
     r#"<h1>No active config</h1>
-<p>Add a config file before editing.</p>"#
+<p>Add a Profile before editing.</p>"#
         .to_string()
 }
 
@@ -440,6 +446,21 @@ mod tests {
     use super::*;
     use crate::state::Profile;
     use std::path::PathBuf;
+
+    #[test]
+    fn first_run_renders_a_flash_banner_when_given_one() {
+        let html = first_run(None, Some(&crate::flash::Flash::Removed));
+
+        assert!(html.contains(r#"class="flash""#));
+        assert!(html.contains("Profile removed"));
+    }
+
+    #[test]
+    fn first_run_renders_no_flash_banner_by_default() {
+        let html = first_run(None, None);
+
+        assert!(!html.contains(r#"class="flash""#));
+    }
 
     #[test]
     fn status_indicator_renders_as_a_distinct_visual_pill_not_plain_text() {

@@ -234,7 +234,7 @@ p {
   gap: 0.75rem;
 }
 
-/* Filled, not just outlined like .config-badge, so a status result reads as
+/* Filled, not just outlined like .profile-badge, so a status result reads as
    a distinct kind of indicator rather than echoing the "active" badge. */
 .status-pill.status-ok {
   background: var(--signal);
