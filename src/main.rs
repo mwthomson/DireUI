@@ -1,6 +1,7 @@
 mod backup;
 mod bind_config;
 mod config;
+mod flash;
 mod state;
 mod store;
 mod views;
