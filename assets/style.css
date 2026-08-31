@@ -299,6 +299,40 @@ textarea:focus {
   color: var(--alert);
 }
 
+.flash {
+  margin: 0 0 1.25rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  background: var(--alert-surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: var(--radius);
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.button:hover {
+  border-color: var(--ink-dim);
+  text-decoration: none;
+}
+
 .form-inline {
   display: flex;
   gap: 0.5rem;

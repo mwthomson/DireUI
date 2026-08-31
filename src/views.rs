@@ -237,16 +237,24 @@ pub fn profiles_page(state: &AppState, flash: Option<&crate::flash::Flash>) -> S
     )
 }
 
-pub fn raw_editor(path: &Path, content: &str) -> String {
+pub fn raw_editor(path: &Path, content: &str, save_error: Option<&str>) -> String {
+    let error_html = save_error
+        .map(|reason| format!(r#"<p class="error-text">save failed: {}</p>"#, html_escape(reason)))
+        .unwrap_or_default();
     format!(
         r#"<h1>Edit raw config</h1>
 <p class="meta">Editing: <span class="config-path">{}</span></p>
+{error}
 <form method="post" action="/raw">
 <textarea class="raw-editor" name="content">{}</textarea>
+<div class="button-row">
 <button type="submit">Save</button>
+<a class="button" href="/">Cancel</a>
+</div>
 </form>"#,
         html_escape(&path.display().to_string()),
-        html_escape(content)
+        html_escape(content),
+        error = error_html
     )
 }
 
@@ -700,5 +708,26 @@ mod tests {
             ("Audio device", Some("ADEVICE"))
         );
         assert_eq!(split_label("PTT"), ("PTT", None));
+    }
+
+    #[test]
+    fn raw_editor_has_no_error_message_by_default() {
+        let html = raw_editor(Path::new("/home/user/.direwolf.conf"), "CHANNEL 0\n", None);
+
+        assert!(!html.contains("save failed"));
+    }
+
+    #[test]
+    fn raw_editor_shows_the_save_failed_reason_when_given_one() {
+        let html = raw_editor(Path::new("/home/user/.direwolf.conf"), "CHANNEL 0\n", Some("disk full"));
+
+        assert!(html.contains("save failed: disk full"));
+    }
+
+    #[test]
+    fn raw_editor_has_a_cancel_link_back_to_profiles() {
+        let html = raw_editor(Path::new("/home/user/.direwolf.conf"), "CHANNEL 0\n", None);
+
+        assert!(html.contains(r#"<a class="button" href="/">Cancel</a>"#));
     }
 }

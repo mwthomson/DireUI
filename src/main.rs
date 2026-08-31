@@ -13,7 +13,7 @@ use std::{
 
 use axum::{
     Form, Router,
-    extract::State,
+    extract::{Query, State},
     http::header,
     response::{Html, IntoResponse, Redirect},
     routing::get,
@@ -43,8 +43,12 @@ impl AppContext {
     }
 }
 
-async fn index(State(ctx): State<AppContext>) -> Html<String> {
+async fn index(
+    State(ctx): State<AppContext>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Html<String> {
     let state = ctx.state.lock().unwrap();
+    let flash = flash::Flash::from_params(&params);
     let body = if state.needs_first_run() {
         let suggestion = ctx
             .home
@@ -52,7 +56,7 @@ async fn index(State(ctx): State<AppContext>) -> Html<String> {
             .and_then(|home| state::suggest_default_config_path(home, |p| p.exists()));
         views::first_run(suggestion.as_deref())
     } else {
-        views::profiles_page(&state, None)
+        views::profiles_page(&state, flash.as_ref())
     };
     Html(views::page(&body, state.active_config.as_deref()))
 }
@@ -125,11 +129,12 @@ fn backup_preference(ctx: &AppContext) -> bool {
     ctx.state.lock().unwrap().backup_preference
 }
 
-fn write_config(ctx: &AppContext, path: &std::path::Path, content: String) {
+fn write_config(ctx: &AppContext, path: &std::path::Path, content: String) -> Result<(), String> {
     let backup_preference = backup_preference(ctx);
-    if let Err(err) = backup::write_with_backup(path, &content, backup_preference) {
+    backup::write_with_backup(path, &content, backup_preference).map_err(|err| {
         eprintln!("error: failed to save {}: {err}", path.display());
-    }
+        err.to_string()
+    })
 }
 
 /// Reads the Active Config's content, or a rendered error page explaining why not.
@@ -149,7 +154,7 @@ fn read_active_config(ctx: &AppContext) -> Result<(PathBuf, String), Html<String
 async fn edit_raw_config(State(ctx): State<AppContext>) -> Html<String> {
     match read_active_config(&ctx) {
         Ok((path, content)) => Html(views::page(
-            &views::raw_editor(&path, &content),
+            &views::raw_editor(&path, &content, None),
             Some(&path),
         )),
         Err(page) => page,
@@ -164,16 +169,26 @@ struct RawConfigForm {
 async fn save_raw_config(
     State(ctx): State<AppContext>,
     Form(form): Form<RawConfigForm>,
-) -> Redirect {
-    let Some(path) = active_config_path(&ctx) else {
-        return Redirect::to("/");
+) -> axum::response::Response {
+    let (path, current_content) = match read_active_config(&ctx) {
+        Ok(pair) => pair,
+        Err(page) => return page.into_response(),
     };
     // Browsers normalize textarea line breaks to CRLF on form submission
     // regardless of the file's original line endings — undo that so an
-    // unedited save doesn't rewrite every line ending in the file.
-    let content = form.content.replace("\r\n", "\n");
-    write_config(&ctx, &path, content);
-    Redirect::to("/raw")
+    // unedited save doesn't rewrite every line ending in the file, and so
+    // this comparison isn't fooled by a line-ending-only "change".
+    let submitted = form.content.replace("\r\n", "\n");
+
+    if submitted == current_content {
+        return Redirect::to(&format!("/?{}", flash::Flash::NoChange.to_query_string())).into_response();
+    }
+
+    match write_config(&ctx, &path, submitted.clone()) {
+        Ok(()) => Redirect::to(&format!("/?{}", flash::Flash::Saved.to_query_string())).into_response(),
+        Err(err) => Html(views::page(&views::raw_editor(&path, &submitted, Some(&err)), Some(&path)))
+            .into_response(),
+    }
 }
 
 struct FormFieldSpec {
@@ -318,7 +333,9 @@ async fn save_directives(
         return Html(views::page(&views::directives_editor(&fields), Some(&path))).into_response();
     }
 
-    write_config(&ctx, &path, doc.serialize());
+    // Same best-effort, log-and-continue behavior as clear_directive — the
+    // Curated Directives save-failure UX is out of scope for this change.
+    let _ = write_config(&ctx, &path, doc.serialize());
     Redirect::to("/directives").into_response()
 }
 
@@ -339,7 +356,10 @@ async fn clear_directive(
     if let Some(spec) = CURATED_FIELDS.iter().find(|s| s.name == form.clear_field) {
         let mut doc = config::Document::parse(&content);
         doc.clear_curated(spec.directive);
-        write_config(&ctx, &path, doc.serialize());
+        // Clear's failure UX is out of scope for this change — same
+        // best-effort, log-and-continue behavior as before write_config
+        // started returning a Result.
+        let _ = write_config(&ctx, &path, doc.serialize());
     }
 
     Redirect::to("/directives").into_response()
