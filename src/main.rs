@@ -179,6 +179,7 @@ async fn save_raw_config(
     // unedited save doesn't rewrite every line ending in the file, and so
     // this comparison isn't fooled by a line-ending-only "change".
     let submitted = form.content.replace("\r\n", "\n");
+    let current_content = current_content.replace("\r\n", "\n");
 
     if submitted == current_content {
         return Redirect::to(&format!("/?{}", flash::Flash::NoChange.to_query_string())).into_response();
@@ -333,9 +334,7 @@ async fn save_directives(
         return Html(views::page(&views::directives_editor(&fields), Some(&path))).into_response();
     }
 
-    // Same best-effort, log-and-continue behavior as clear_directive — the
-    // Curated Directives save-failure UX is out of scope for this change.
-    let _ = write_config(&ctx, &path, doc.serialize());
+    write_config(&ctx, &path, doc.serialize());
     Redirect::to("/directives").into_response()
 }
 
@@ -427,4 +426,67 @@ async fn main() {
 
     println!("DireUI listening on http://{addr}");
     axum::serve(listener, app).await.unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_config_path(test_name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("direui-test-{test_name}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("direwolf.conf")
+    }
+
+    fn test_ctx(active_config: PathBuf) -> AppContext {
+        let mut state = state::AppState::default();
+        state.active_config = Some(active_config);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let state_path = std::env::temp_dir().join(format!("direui-test-state-{nanos}.json"));
+        AppContext {
+            state: Arc::new(Mutex::new(state)),
+            store: Arc::new(StateStore::new(state_path)),
+            home: None,
+        }
+    }
+
+    // Regression test for the CRLF normalization asymmetry: an on-disk
+    // config with CRLF line endings, saved back unedited (the browser
+    // round-trips textarea content as CRLF), must be detected as a
+    // no-change save rather than silently rewriting the file's line
+    // endings on every save.
+    #[tokio::test]
+    async fn save_raw_config_detects_no_change_against_crlf_file_on_disk() {
+        let path = temp_config_path("crlf-no-change");
+        let crlf_content = "CHANNEL 0\r\nMODEM 1200\r\n";
+        std::fs::write(&path, crlf_content).unwrap();
+        let ctx = test_ctx(path.clone());
+
+        let form = RawConfigForm {
+            content: crlf_content.to_string(),
+        };
+
+        let response = save_raw_config(State(ctx), Form(form)).await;
+
+        let location = response
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            location.contains("flash=nochange"),
+            "expected a no-change flash redirect, got {location:?}"
+        );
+
+        // The file's original CRLF line endings must be left untouched.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), crlf_content);
+    }
 }
