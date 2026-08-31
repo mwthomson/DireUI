@@ -26,3 +26,14 @@ DIREUI_BIND=0.0.0.0:8080 cargo run
 ```
 
 `--bind` takes precedence over `DIREUI_BIND` if both are set.
+
+## Stack
+
+- **Rust** — compiles to a single static binary, no runtime to install (see [ADR 0002](docs/adr/0002-rust-htmx-stack.md)).
+- **[axum](https://github.com/tokio-rs/axum)** on **[tokio](https://tokio.rs)** — HTTP server.
+- **[serde](https://serde.rs)** — config (de)serialization.
+- Server-rendered HTML built in `src/views.rs` — no template engine, no frontend build step.
+- **[htmx](https://htmx.org) 4.0.0** — the only client-side JS, vendored in `assets/vendor/htmx/`. Drives partial page updates over HTML.
+- Plain CSS in `assets/style.css`.
+
+All assets are embedded into the binary at compile time, so deployment is copy-and-run.
