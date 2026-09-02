@@ -116,7 +116,7 @@ p {
   color: var(--ink-dim);
 }
 
-.config-list {
+.profile-list {
   list-style: none;
   margin: 0 0 1.5rem;
   padding: 0;
@@ -125,7 +125,7 @@ p {
   border-radius: var(--radius);
 }
 
-.config-list li {
+.profile-list li {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -134,7 +134,7 @@ p {
   border-bottom: 1px solid var(--line);
 }
 
-.config-list li:last-child {
+.profile-list li:last-child {
   border-bottom: none;
 }
 
@@ -152,6 +152,67 @@ p {
   text-underline-offset: 2px;
 }
 
+.profile-name {
+  font-weight: 600;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+
+.profile-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.profile-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.profile-rename-form {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* [hidden] and .profile-rename-form{display:flex} have equal specificity, so
+   without this the class rule (later in the cascade) would win and the form
+   would stay visible even while hidden — this attribute-plus-class selector
+   is more specific and restores the native hidden behavior. */
+.profile-rename-form[hidden] {
+  display: none;
+}
+
+.profile-rename-form input[type="text"] {
+  width: auto;
+  flex: initial;
+}
+
+.profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.icon-button {
+  background: transparent;
+  border: 1px solid transparent;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.3rem;
+}
+
+.icon-button:hover {
+  border-color: var(--line);
+}
+
 .pill {
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -162,7 +223,7 @@ p {
   white-space: nowrap;
 }
 
-.config-badge {
+.profile-badge {
   color: var(--signal);
   border: 1px solid var(--signal);
 }
@@ -173,7 +234,7 @@ p {
   gap: 0.75rem;
 }
 
-/* Filled, not just outlined like .config-badge, so a status result reads as
+/* Filled, not just outlined like .profile-badge, so a status result reads as
    a distinct kind of indicator rather than echoing the "active" badge. */
 .status-pill.status-ok {
   background: var(--signal);
@@ -287,6 +348,40 @@ textarea:focus {
   color: var(--alert);
 }
 
+.flash {
+  margin: 0 0 1.25rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  background: var(--alert-surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: var(--radius);
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.button:hover {
+  border-color: var(--ink-dim);
+  text-decoration: none;
+}
+
 .form-inline {
   display: flex;
   gap: 0.5rem;
@@ -355,4 +450,29 @@ a:hover {
   * {
     transition: none !important;
   }
+}
+
+dialog.delete-dialog {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  max-width: 420px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+dialog.delete-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.button-danger {
+  background: var(--alert);
+  color: var(--signal-ink);
+  border-color: var(--alert);
 }

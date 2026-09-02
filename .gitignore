@@ -6,3 +6,4 @@ direwolf-runtime-config.md
 # Added by cargo
 
 /target
+.worktrees/

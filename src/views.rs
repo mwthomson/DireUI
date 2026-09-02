@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::state::AppState;
+use crate::state::{self, AppState};
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -11,7 +11,7 @@ fn html_escape(s: &str) -> String {
 
 // Present on every page so a config being edited elsewhere (raw-text editor,
 // Curated Directive form) never loses sight of which Config File it's
-// editing, and always has a consistent way back to the config manager.
+// editing, and always has a consistent way back to the Profiles page.
 pub fn page(body: &str, active_config: Option<&Path>) -> String {
     let active = active_config
         .map(|p| p.display().to_string())
@@ -25,13 +25,14 @@ pub fn page(body: &str, active_config: Option<&Path>) -> String {
 <title>DireUI</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/vendor/htmx/htmx.min.js"></script>
+<script src="/app.js" defer></script>
 </head>
 <body>
 <header class="site-header">
 <p class="wordmark">DireUI</p>
 <nav class="site-nav">
 <span class="site-active-config">Active config: <span class="config-path">{active}</span></span>
-<a href="/">Configs</a>
+<a href="/">Profiles</a>
 </nav>
 </header>
 <main class="page">
@@ -45,27 +46,50 @@ pub fn page(body: &str, active_config: Option<&Path>) -> String {
     )
 }
 
-fn add_config_form(value: &str, placeholder: &str, label: &str) -> String {
+fn add_profile_form(
+    path_value: &str,
+    path_placeholder: &str,
+    name_placeholder: &str,
+    submit_label: &str,
+    show_make_active: bool,
+) -> String {
+    let make_active_html = if show_make_active {
+        r#"<label class="checkbox-label"><input type="checkbox" name="make_active" value="true"> Make this the active profile</label>"#
+    } else {
+        ""
+    };
     format!(
-        r#"<form class="form-inline" method="post" action="/configs">
-<input type="text" name="path" value="{}" placeholder="{}">
-<button type="submit">{}</button>
+        r#"<form class="form-inline" method="post" action="/profiles">
+<input type="text" name="name" value="" placeholder="{name_placeholder}" required>
+<input type="text" name="path" value="{path_value}" placeholder="{path_placeholder}">
+{make_active}
+<button type="submit">{label}</button>
 </form>"#,
-        html_escape(value),
-        html_escape(placeholder),
-        html_escape(label)
+        name_placeholder = html_escape(name_placeholder),
+        path_value = html_escape(path_value),
+        path_placeholder = html_escape(path_placeholder),
+        make_active = make_active_html,
+        label = html_escape(submit_label)
     )
 }
 
-pub fn first_run(suggested_path: Option<&Path>) -> String {
+fn flash_banner_html(flash: Option<&crate::flash::Flash>) -> String {
+    flash
+        .map(|f| format!(r#"<p class="flash" role="status">{}</p>"#, html_escape(&f.message())))
+        .unwrap_or_default()
+}
+
+pub fn first_run(suggested_path: Option<&Path>, flash: Option<&crate::flash::Flash>) -> String {
     let suggestion = suggested_path
         .map(|p| p.display().to_string())
         .unwrap_or_default();
     format!(
         r#"<h1>Welcome to DireUI</h1>
+{flash}
 <p>Choose the Direwolf config file DireUI should manage.</p>
-{}"#,
-        add_config_form(&suggestion, "/home/user/.direwolf.conf", "Use this config")
+{form}"#,
+        flash = flash_banner_html(flash),
+        form = add_profile_form(&suggestion, "/home/user/.direwolf.conf", "e.g. APRS", "Use this config", false)
     )
 }
 
@@ -116,7 +140,7 @@ fn common_segment_range(segments: &[Vec<&str>]) -> (usize, usize) {
     (prefix_len, suffix_len)
 }
 
-// With more than one saved config path, long, mostly-identical paths (e.g.
+// With more than one Profile path, long, mostly-identical paths (e.g.
 // two entries differing only in one directory name) are hard to tell apart
 // at a glance. Wraps the segment(s) that actually differ across `paths` in a
 // `config-path-diff` span so the difference stands out without reading the
@@ -163,38 +187,93 @@ pub fn status_indicator() -> String {
     r#"<span class="pill status-pill status-ok">Server is running</span>"#.to_string()
 }
 
-pub fn config_manager(state: &AppState) -> String {
-    let displays: Vec<String> = state
-        .known_configs
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect();
+fn profile_row_html(profile: &state::Profile, is_active: bool, path_html: &str) -> String {
+    let name = html_escape(&profile.name);
+    let path_attr = html_escape(&profile.path.display().to_string());
+    let status_html = if is_active {
+        r#"<span class="pill profile-badge">active</span>"#.to_string()
+    } else {
+        format!(
+            r#"<form method="post" action="/profiles/activate"><input type="hidden" name="path" value="{path}"><button type="submit">Switch to this</button></form>"#,
+            path = path_attr
+        )
+    };
+    format!(
+        r#"<li>
+<div class="profile-main">
+<div class="profile-name-cell">
+<span class="profile-name" data-name-display>{name}</span>
+<form method="post" action="/profiles/rename" class="profile-rename-form" data-name-edit hidden>
+<input type="hidden" name="path" value="{path}">
+<input type="text" name="name" value="{name}" required>
+<button type="submit">Save</button>
+<button type="button" data-cancel-rename>Cancel</button>
+</form>
+<button type="button" class="icon-button" data-edit-name aria-label="Rename profile">&#9998;</button>
+</div>
+<span class="config-path" title="{path}">{path_html}</span>
+</div>
+<div class="profile-actions">
+{status}
+<button type="button" class="icon-button" data-delete-path="{path}" data-delete-name="{name}" aria-label="Remove or delete profile">&#128465;</button>
+</div>
+</li>"#,
+        name = name,
+        path = path_attr,
+        path_html = path_html,
+        status = status_html
+    )
+}
+
+fn delete_dialog() -> String {
+    r#"<dialog id="delete-dialog" class="delete-dialog">
+<div id="delete-step-1">
+<p>Remove <strong id="delete-dialog-name"></strong> from DireUI?</p>
+<div class="dialog-actions">
+<button type="button" onclick="document.getElementById('delete-dialog').close()">Cancel</button>
+<form method="post" action="/profiles/remove">
+<input type="hidden" name="path" id="delete-dialog-remove-path">
+<button type="submit">Remove</button>
+</form>
+<button type="button" id="delete-dialog-show-step-2">Delete file too&hellip;</button>
+</div>
+</div>
+<div id="delete-step-2" hidden>
+<p class="error-text">This permanently deletes the Config File from disk. This cannot be undone. If this is the active Profile, another Profile will automatically become active.</p>
+<div class="dialog-actions">
+<button type="button" id="delete-dialog-show-step-1">Back</button>
+<form method="post" action="/profiles/delete">
+<input type="hidden" name="path" id="delete-dialog-delete-path">
+<button type="submit" class="button-danger">Yes, delete the file</button>
+</form>
+</div>
+</div>
+</dialog>"#
+        .to_string()
+}
+
+pub fn profiles_page(state: &AppState, flash: Option<&crate::flash::Flash>) -> String {
+    let ordered = state.ordered_profiles();
+    let displays: Vec<String> = ordered.iter().map(|p| p.path.display().to_string()).collect();
     let highlighted = highlight_differing_segments(&displays);
 
-    let list_items: String = state
-        .known_configs
+    let list_items: String = ordered
         .iter()
-        .zip(displays.iter())
         .zip(highlighted.iter())
-        .map(|((p, display), path_html)| {
-            let title = html_escape(display);
-            if state.active_config.as_deref() == Some(p.as_path()) {
-                format!(
-                    r#"<li><span class="config-path" title="{title}">{path_html}</span><span class="pill config-badge">active</span></li>"#
-                )
-            } else {
-                format!(
-                    r#"<li><span class="config-path" title="{title}">{path_html}</span><form method="post" action="/configs/active"><input type="hidden" name="path" value="{title}"><button type="submit">Switch to this</button></form></li>"#
-                )
-            }
+        .map(|(profile, path_html)| {
+            let is_active = state.active_config.as_deref() == Some(profile.path.as_path());
+            profile_row_html(profile, is_active, path_html)
         })
         .collect();
 
+    let flash_html = flash_banner_html(flash);
+
     format!(
-        r##"<h1>Configurations</h1>
-<ul class="config-list">{}</ul>
-{}
-{}
+        r##"<h1>Profiles</h1>
+{flash}
+<ul class="profile-list">{items}</ul>
+{add_form}
+{backup_toggle}
 <nav class="actions">
 <a href="/directives">Edit directives</a>
 <a href="/raw">Edit raw config</a>
@@ -202,23 +281,34 @@ pub fn config_manager(state: &AppState) -> String {
 <button hx-get="/status" hx-target="#server-status" hx-swap="innerHTML">Check server status</button>
 <span id="server-status" aria-live="polite"></span>
 </div>
-</nav>"##,
-        list_items,
-        add_config_form("", "/home/user/aprs.conf", "Add config"),
-        backup_preference_toggle(state.backup_preference)
+</nav>
+{dialog}"##,
+        flash = flash_html,
+        items = list_items,
+        add_form = add_profile_form("", "/home/user/aprs.conf", "e.g. APRS", "Add profile", !state.profiles.is_empty()),
+        backup_toggle = backup_preference_toggle(state.backup_preference),
+        dialog = delete_dialog(),
     )
 }
 
-pub fn raw_editor(path: &Path, content: &str) -> String {
+pub fn raw_editor(path: &Path, content: &str, save_error: Option<&str>) -> String {
+    let error_html = save_error
+        .map(|reason| format!(r#"<p class="error-text">save failed: {}</p>"#, html_escape(reason)))
+        .unwrap_or_default();
     format!(
         r#"<h1>Edit raw config</h1>
 <p class="meta">Editing: <span class="config-path">{}</span></p>
+{error}
 <form method="post" action="/raw">
 <textarea class="raw-editor" name="content">{}</textarea>
+<div class="button-row">
 <button type="submit">Save</button>
+<a class="button" href="/">Cancel</a>
+</div>
 </form>"#,
         html_escape(&path.display().to_string()),
-        html_escape(content)
+        html_escape(content),
+        error = error_html
     )
 }
 
@@ -300,7 +390,7 @@ fn directive_field_html(f: &DirectiveField) -> String {
 // Fields already arrive ordered by directive area (see CURATED_FIELDS), so
 // grouping is a matter of chunking on consecutive equal `group` values
 // rather than sorting/bucketing by group name.
-pub fn directives_editor(fields: &[DirectiveField]) -> String {
+pub fn directives_editor(fields: &[DirectiveField], save_error: Option<&str>) -> String {
     let groups_html: String = fields
         .chunk_by(|a, b| a.group == b.group)
         .map(|group_fields| {
@@ -318,19 +408,28 @@ pub fn directives_editor(fields: &[DirectiveField]) -> String {
         })
         .collect();
 
+    let error_html = save_error
+        .map(|reason| format!(r#"<p class="error-text">save failed: {}</p>"#, html_escape(reason)))
+        .unwrap_or_default();
+
     format!(
         r#"<h1>Edit directives</h1>
+{error}
 <form method="post" action="/directives">
 {}
+<div class="button-row">
 <button type="submit">Save</button>
+<a class="button" href="/">Cancel</a>
+</div>
 </form>"#,
-        groups_html
+        groups_html,
+        error = error_html
     )
 }
 
 pub fn no_active_config() -> String {
     r#"<h1>No active config</h1>
-<p>Add a config file before editing.</p>"#
+<p>Add a Profile before editing.</p>"#
         .to_string()
 }
 
@@ -345,7 +444,23 @@ pub fn error(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::Profile;
     use std::path::PathBuf;
+
+    #[test]
+    fn first_run_renders_a_flash_banner_when_given_one() {
+        let html = first_run(None, Some(&crate::flash::Flash::Removed));
+
+        assert!(html.contains(r#"class="flash""#));
+        assert!(html.contains("Profile removed"));
+    }
+
+    #[test]
+    fn first_run_renders_no_flash_banner_by_default() {
+        let html = first_run(None, None);
+
+        assert!(!html.contains(r#"class="flash""#));
+    }
 
     #[test]
     fn status_indicator_renders_as_a_distinct_visual_pill_not_plain_text() {
@@ -355,10 +470,32 @@ mod tests {
     }
 
     #[test]
-    fn config_manager_status_button_targets_a_separate_indicator_not_itself() {
+    fn profiles_page_includes_a_delete_button_for_each_profile() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/aprs.conf"), "APRS".to_string(), false);
+
+        let html = profiles_page(&state, None);
+
+        assert!(html.contains(r#"data-delete-path="/home/user/aprs.conf""#));
+        assert!(html.contains(r#"data-delete-name="APRS""#));
+    }
+
+    #[test]
+    fn profiles_page_includes_the_shared_delete_dialog_with_both_actions() {
         let state = AppState::default();
 
-        let html = config_manager(&state);
+        let html = profiles_page(&state, None);
+
+        assert!(html.contains(r#"<dialog id="delete-dialog""#));
+        assert!(html.contains(r#"action="/profiles/remove""#));
+        assert!(html.contains(r#"action="/profiles/delete""#));
+    }
+
+    #[test]
+    fn profiles_page_status_button_targets_a_separate_indicator_not_itself() {
+        let state = AppState::default();
+
+        let html = profiles_page(&state, None);
 
         // The button must survive the swap so it can be clicked again — it
         // targets a sibling element rather than replacing itself.
@@ -366,6 +503,18 @@ mod tests {
             r##"<button hx-get="/status" hx-target="#server-status" hx-swap="innerHTML">Check server status</button>"##
         ));
         assert!(html.contains(r#"<span id="server-status""#));
+    }
+
+    #[test]
+    fn profiles_page_includes_a_rename_form_for_each_profile() {
+        let mut state = AppState::default();
+        state.add_profile(PathBuf::from("/home/user/aprs.conf"), "APRS".to_string(), false);
+
+        let html = profiles_page(&state, None);
+
+        assert!(html.contains(r#"<form method="post" action="/profiles/rename""#));
+        assert!(html.contains(r#"value="/home/user/aprs.conf""#));
+        assert!(html.contains(r#"value="APRS""#));
     }
 
     #[test]
@@ -386,10 +535,10 @@ mod tests {
     }
 
     #[test]
-    fn page_always_links_back_to_the_config_manager() {
+    fn page_always_links_back_to_the_profiles_page() {
         let html = page("<p>body</p>", None);
 
-        assert!(html.contains(r#"<a href="/">Configs</a>"#));
+        assert!(html.contains(r#"<a href="/">Profiles</a>"#));
     }
 
     #[test]
@@ -502,48 +651,68 @@ mod tests {
     }
 
     #[test]
-    fn config_manager_marks_the_differing_segment_between_two_known_configs() {
+    fn profiles_page_marks_the_differing_segment_between_two_profiles() {
         let state = AppState {
-            known_configs: vec![
-                PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
-                PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+            profiles: vec![
+                Profile {
+                    path: PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
+                    name: "APRS".to_string(),
+                    last_activated_at: 0,
+                },
+                Profile {
+                    path: PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+                    name: "Packet".to_string(),
+                    last_activated_at: 0,
+                },
             ],
             active_config: Some(PathBuf::from("/home/pi/aprs-config/direwolf.conf")),
             backup_preference: false,
         };
 
-        let html = config_manager(&state);
+        let html = profiles_page(&state, None);
 
         assert!(html.contains(r#"<span class="config-path-diff">aprs-config</span>"#));
         assert!(html.contains(r#"<span class="config-path-diff">packet-config</span>"#));
     }
 
     #[test]
-    fn config_manager_still_marks_the_active_config_when_paths_are_similar() {
+    fn profiles_page_still_marks_the_active_config_when_paths_are_similar() {
         let state = AppState {
-            known_configs: vec![
-                PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
-                PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+            profiles: vec![
+                Profile {
+                    path: PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
+                    name: "APRS".to_string(),
+                    last_activated_at: 0,
+                },
+                Profile {
+                    path: PathBuf::from("/home/pi/packet-config/direwolf.conf"),
+                    name: "Packet".to_string(),
+                    last_activated_at: 0,
+                },
             ],
             active_config: Some(PathBuf::from("/home/pi/packet-config/direwolf.conf")),
             backup_preference: false,
         };
 
-        let html = config_manager(&state);
+        let html = profiles_page(&state, None);
 
-        assert!(html.contains(r#"<span class="pill config-badge">active</span>"#));
+        assert!(html.contains(r#"<span class="pill profile-badge">active</span>"#));
         assert!(html.contains(r#"<span class="config-path-diff">packet-config</span>"#));
     }
 
     #[test]
-    fn config_manager_shows_the_full_path_as_a_title_attribute() {
+    fn profiles_page_shows_the_full_path_as_a_title_attribute() {
         let state = AppState {
-            known_configs: vec![PathBuf::from("/home/pi/aprs-config/direwolf.conf")],
+            profiles: vec![Profile {
+                path: PathBuf::from("/home/pi/aprs-config/direwolf.conf"),
+                name: "APRS".to_string(),
+                last_activated_at: 0,
+            }],
             active_config: Some(PathBuf::from("/home/pi/aprs-config/direwolf.conf")),
             backup_preference: false,
         };
 
-        let html = config_manager(&state);
+        let html = profiles_page(&state, None);
 
         assert!(html.contains(r#"title="/home/pi/aprs-config/direwolf.conf""#));
     }
@@ -565,7 +734,7 @@ mod tests {
         let mut f = field("APRS beaconing", "cbeacon");
         f.value = "delay=1 info=\"Test\"".to_string();
 
-        let html = directives_editor(std::slice::from_ref(&f));
+        let html = directives_editor(std::slice::from_ref(&f), None);
 
         // formaction submits the same form to a separate route, so clearing
         // is a deliberate action distinct from blanking the field and
@@ -579,7 +748,7 @@ mod tests {
     fn a_field_with_no_existing_value_has_no_clear_button() {
         let f = field("APRS beaconing", "cbeacon");
 
-        let html = directives_editor(std::slice::from_ref(&f));
+        let html = directives_editor(std::slice::from_ref(&f), None);
 
         assert!(!html.contains("Clear"));
     }
@@ -593,7 +762,7 @@ mod tests {
         f.clearable = false;
         f.value = "0".to_string();
 
-        let html = directives_editor(std::slice::from_ref(&f));
+        let html = directives_editor(std::slice::from_ref(&f), None);
 
         assert!(!html.contains("Clear"));
     }
@@ -604,7 +773,7 @@ mod tests {
         f.multiline = true;
         f.value = "delay=1 every=30 lat=42^37.14N long=071^20.83W".to_string();
 
-        let html = directives_editor(std::slice::from_ref(&f));
+        let html = directives_editor(std::slice::from_ref(&f), None);
 
         assert!(html.contains(r#"<textarea class="field-textarea" id="pbeacon" name="pbeacon" rows="2">delay=1 every=30 lat=42^37.14N long=071^20.83W</textarea>"#));
         assert!(!html.contains(r#"<input type="text" id="pbeacon""#));
@@ -619,7 +788,7 @@ mod tests {
             field("Channel, modem & PTT", "ptt"),
         ];
 
-        let html = directives_editor(&fields);
+        let html = directives_editor(&fields, None);
 
         let audio_pos = html.find("Audio device").unwrap();
         let channel_pos = html.find("Channel, modem &amp; PTT").unwrap();
@@ -632,7 +801,7 @@ mod tests {
     fn directives_editor_places_each_field_within_its_group_section() {
         let fields = [field("Audio device", "adevice"), field("Network ports", "agwport")];
 
-        let html = directives_editor(&fields);
+        let html = directives_editor(&fields, None);
 
         let audio_heading = html.find("Audio device").unwrap();
         let adevice_field = html.find(r#"id="adevice""#).unwrap();
@@ -645,11 +814,59 @@ mod tests {
     }
 
     #[test]
+    fn directives_editor_has_no_top_level_error_by_default() {
+        let f = field("Audio device", "adevice");
+
+        let html = directives_editor(std::slice::from_ref(&f), None);
+
+        assert!(!html.contains("save failed"));
+    }
+
+    #[test]
+    fn directives_editor_shows_a_top_level_save_failed_message_when_given_one() {
+        let f = field("Audio device", "adevice");
+
+        let html = directives_editor(std::slice::from_ref(&f), Some("disk full"));
+
+        assert!(html.contains("save failed: disk full"));
+    }
+
+    #[test]
+    fn directives_editor_has_a_cancel_link_back_to_profiles() {
+        let f = field("Audio device", "adevice");
+
+        let html = directives_editor(std::slice::from_ref(&f), None);
+
+        assert!(html.contains(r#"<a class="button" href="/">Cancel</a>"#));
+    }
+
+    #[test]
     fn split_label_extracts_trailing_keyword() {
         assert_eq!(
             split_label("Audio device (ADEVICE)"),
             ("Audio device", Some("ADEVICE"))
         );
         assert_eq!(split_label("PTT"), ("PTT", None));
+    }
+
+    #[test]
+    fn raw_editor_has_no_error_message_by_default() {
+        let html = raw_editor(Path::new("/home/user/.direwolf.conf"), "CHANNEL 0\n", None);
+
+        assert!(!html.contains("save failed"));
+    }
+
+    #[test]
+    fn raw_editor_shows_the_save_failed_reason_when_given_one() {
+        let html = raw_editor(Path::new("/home/user/.direwolf.conf"), "CHANNEL 0\n", Some("disk full"));
+
+        assert!(html.contains("save failed: disk full"));
+    }
+
+    #[test]
+    fn raw_editor_has_a_cancel_link_back_to_profiles() {
+        let html = raw_editor(Path::new("/home/user/.direwolf.conf"), "CHANNEL 0\n", None);
+
+        assert!(html.contains(r#"<a class="button" href="/">Cancel</a>"#));
     }
 }

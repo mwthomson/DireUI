@@ -117,7 +117,7 @@ mod tests {
     fn saved_state_survives_a_reload_via_a_new_store_instance() {
         let path = temp_state_path("roundtrip");
         let mut state = AppState::default();
-        state.add_known_config(PathBuf::from("/home/user/.direwolf.conf"));
+        state.add_profile(PathBuf::from("/home/user/.direwolf.conf"), "Main".to_string(), false);
 
         StateStore::new(path.clone()).save(&state).unwrap();
         let reloaded = StateStore::new(path).load();
@@ -126,8 +126,8 @@ mod tests {
     }
 
     #[test]
-    fn loading_a_state_file_written_before_backup_preference_existed_preserves_other_fields() {
-        let path = temp_state_path("pre-backup-preference-upgrade");
+    fn loading_a_pre_profile_rename_state_file_resets_to_default_per_adr_0005() {
+        let path = temp_state_path("pre-profile-rename-upgrade");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
@@ -137,15 +137,7 @@ mod tests {
 
         let state = StateStore::new(path).load();
 
-        assert_eq!(
-            state.known_configs,
-            vec![PathBuf::from("/home/user/.direwolf.conf")]
-        );
-        assert_eq!(
-            state.active_config,
-            Some(PathBuf::from("/home/user/.direwolf.conf"))
-        );
-        assert_eq!(state.backup_preference, false);
+        assert_eq!(state, AppState::default());
     }
 
     #[test]
